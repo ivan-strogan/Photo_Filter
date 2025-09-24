@@ -1,0 +1,175 @@
+Photo Filter AI App - Development Todo List
+==============================================
+
+[x] Research and analyze existing photo library structure and metadata
+[x] Set up project structure and Python environment with required dependencies
+[x] Implement media file detection and parsing (IMG_YYYYMMDD_HHMMSS.JPG/.MOV format)
+[x] Implement photo metadata extraction (Exif data, location, timestamps)
+[x] Implement video metadata extraction (creation time, location, duration)
+[x] Set up local vector database for photo embeddings storage (ChromaDB/FAISS)
+[x] Implement GPU detection and configuration for accelerated processing
+[x] Integrate computer vision API for photo content analysis (objects, scenes, activities)
+[x] Implement video analysis for content extraction (key frames, scenes, activities)
+[ ] Implement face detection and recognition system for people identification
+    DETAILED IMPLEMENTATION PLAN:
+
+    Phase 1: Create Face Recognition Module (src/face_recognizer.py)
+    - Problem: No face detection/recognition implementation despite library being installed
+    - Tasks:
+      • Create FaceRecognizer class with face_recognition library integration
+      • Implement detect_faces(image_path) -> List[Face] with bounding boxes
+      • Implement extract_face_encodings(image_path) -> List[face_encoding_128d]
+      • Implement compare_faces(known_encodings, unknown_encoding) -> matches
+      • Add face encoding caching to avoid re-processing same faces
+      • Support batch processing for multiple photos
+      • Add configuration for face detection model (hog vs cnn)
+
+    Phase 2: Integration with Content Analyzer
+    - Problem: Content analysis doesn't include people detection
+    - Tasks:
+      • Add face detection to ContentAnalyzer.analyze_photo()
+      • Store face count and face encodings in photo metadata
+      • Update ContentAnalysisResult to include people_count and face_data
+      • Add face detection to batch analysis workflow
+      • Handle errors gracefully when face detection fails
+
+    Phase 3: People Database and Recognition
+    - Problem: No way to identify and track people across photos
+    - Tasks:
+      • Create PeopleDatabase class to store known face encodings
+      • Implement person identification using encoding similarity
+      • Add manual person labeling interface (CLI command)
+      • Support learning from organized photos with people names in folder titles
+      • Store people database in data/people_encodings.json with face clustering
+      • Add confidence scoring for person identification
+
+    Phase 4: Enhanced Clustering with People Data
+    - Problem: Clustering doesn't use people information for grouping
+    - Tasks:
+      • Update MediaCluster.people_detected to store actual person names
+      • Add people-based clustering logic to MediaClusteringEngine
+      • Group photos with same people together within time windows
+      • Add people consistency scoring to confidence calculation
+      • Update cluster refinement to consider people data
+      • Handle photos with multiple people vs single person events
+
+    Phase 5: Intelligent Event Naming with People
+    - Problem: Event names don't incorporate people information
+    - Tasks:
+      • Update EventNamer to use people_detected in naming logic
+      • Generate names like "Sarah & Mike Wedding" or "Family Dinner"
+      • Add people-based name templates for common scenarios
+      • Integrate with LLM prompts to include people context
+      • Handle privacy considerations (anonymize unknown people)
+      • Add configuration for people-based naming preferences
+
+    Phase 6: CLI and Configuration
+    - Problem: No user interface for managing face recognition features
+    - Tasks:
+      • Add 'python main.py faces scan' command to process existing photos
+      • Add 'python main.py faces identify --person "Name"' for manual labeling
+      • Add 'python main.py faces list' to show recognized people
+      • Add face recognition enable/disable in configuration
+      • Add face detection model selection (speed vs accuracy)
+      • Add privacy controls for face data storage and processing
+
+    Configuration Parameters Needed:
+    - faces.enable_face_detection: bool = False (disabled by default for privacy)
+    - faces.detection_model: str = "hog" (hog=fast, cnn=accurate)
+    - faces.recognition_tolerance: float = 0.6 (lower=stricter matching)
+    - faces.min_face_size: int = 50 (minimum face size in pixels)
+    - faces.include_in_naming: bool = True (use people data in event names)
+    - faces.store_encodings: bool = True (cache face encodings for performance)
+
+    Privacy Considerations:
+    - Face encodings are mathematical representations, not actual face images
+    - Users can disable face detection entirely
+    - Face data stored locally, never transmitted
+    - Option to anonymize people in event names ("2 people" vs names)
+    - Clear documentation about what face data is stored
+[x] Create photo vectorization pipeline with GPU acceleration when available
+[x] Create video processing pipeline for key frame extraction and analysis
+[x] Add reverse geocoding for location-based clustering using GPS coordinates
+[x] Develop temporal clustering algorithm to group photos and videos by date proximity
+[⚠] Integrate LLM for intelligent event naming based on photo and video analysis results
+[x] Create media clustering logic combining location, time, content, people, and vector similarity data
+[ ] Implement automated folder creation with generated event names
+[ ] Build media moving/copying system to organize photos and videos into generated folders
+[x] Add configuration system for customizable clustering parameters
+[x] Implement logging and progress tracking for batch media processing
+[x] Create CLI interface for running the media organization process
+[x] Add error handling and validation for corrupted or unsupported media files
+[x] Test the complete system with sample photo and video collections
+[x] Implement organized photos scanner to learn from existing photo organization
+[x] Add smart duplicate detection and caching to prevent re-processing
+[x] Fix minimum cluster size filtering issues (changed from 3 to 1)
+[x] Fix location refinement bug that dropped files without GPS coordinates
+[x] Add comprehensive debug tracing through pipeline stages
+
+=== HIGH PRIORITY BUG FIXES ===
+[ ] Fix configuration inconsistency bug in src/config.py (MIN_CLUSTER_SIZE = 3 vs 1)
+    - Problem: src/config.py has MIN_CLUSTER_SIZE = 3 but config_manager.py and temporal_clustering.py use 1
+    - Impact: Can cause inconsistent filtering behavior where some modules filter differently
+    - Fix: Update src/config.py line 31 to set MIN_CLUSTER_SIZE = 1 for consistency
+
+[ ] Replace debug print statements with proper logging
+    - Problem: Multiple print() statements in production code (media_clustering.py, photo_organizer_pipeline.py, event_namer.py)
+    - Impact: Clutters console output, not configurable, unprofessional in production
+    - Fix: Replace all print() calls with self.logger.debug() for proper log level control
+
+[ ] Implement video GPS extraction (TODO in metadata_extractor.py:258)
+    - Problem: Video files don't have location data extracted for clustering
+    - Impact: Videos missing from location-based clustering, reducing event detection accuracy
+    - Fix: Add video metadata parsing to extract GPS coordinates from MOV/MP4 files
+
+[ ] Fix GPS coordinate matching performance issue
+    - Problem: Nested loops in media_clustering.py:267-276 create O(n²) performance
+    - Impact: Slow processing with large photo sets, especially location clustering
+    - Fix: Use dictionary lookup or spatial indexing for GPS coordinate matching
+
+=== MEDIUM PRIORITY IMPROVEMENTS ===
+[ ] Improve error handling specificity (replace broad Exception catching)
+    - Problem: Many files use "except Exception as e:" which masks specific errors
+    - Impact: Makes debugging difficult, can hide important error details
+    - Fix: Catch specific exception types (FileNotFoundError, PermissionError, etc.)
+
+[ ] Add metadata caching system
+    - Problem: Same file metadata extracted multiple times across different modules
+    - Impact: Performance degradation with large photo sets, redundant file I/O
+    - Fix: Implement metadata cache with file modification time validation
+
+[ ] Make magic numbers configurable
+    - Problem: Hardcoded values like GPS precision (0.001), similarity thresholds (0.7)
+    - Impact: Difficult to tune system performance for different use cases
+    - Fix: Move constants to configuration system with sensible defaults
+
+[ ] Fix missing error context in organized_photos_scanner.py
+    - Problem: Exception caught but error details not preserved in results (lines 272-275)
+    - Impact: Silent failures during photo processing, difficult to troubleshoot
+    - Fix: Add error details to result dictionary for better error reporting
+
+=== LOW PRIORITY CLEANUPS ===
+[ ] Standardize date/time handling in MediaFile class
+    - Problem: MediaFile.date uses dt.date() but MediaFile.time uses dt (datetime)
+    - Impact: Inconsistent date/time handling across codebase, potential confusion
+    - Fix: Use consistent datetime types or clearly document the difference
+
+[ ] Make file paths configurable (hardcoded cache paths)
+    - Problem: Cache file paths hardcoded in event_namer.py and other modules
+    - Impact: Not configurable for different deployment scenarios
+    - Fix: Move file paths to configuration system
+
+[ ] Add GPS coordinate precision configuration
+    - Problem: GPS comparison uses hardcoded 0.001 precision in media_clustering.py
+    - Impact: May be too strict/loose for different geographic regions
+    - Fix: Make GPS precision configurable based on clustering requirements
+
+Notes:
+- Use [x] to mark completed tasks
+- Target output format: YYYY_MM_DD - Event Name (e.g., 2024_10_24 - Mexico Vacation)
+- Input file format: IMG_YYYYMMDD_HHMMSS.JPG for photos, IMG_YYYYMMDD_HHMMSS.MOV for videos
+- Leverage iPhone media metadata including GPS coordinates for clustering
+- Integrate AI/LLM for intelligent event identification and naming
+- Use local vector database (ChromaDB/FAISS) for efficient media similarity search
+- Enable GPU acceleration for computer vision and vectorization when hardware supports it
+- Process both photos and videos together in the same event clustering
