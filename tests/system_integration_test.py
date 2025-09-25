@@ -294,13 +294,14 @@ def test_component_interaction():
         print("1️⃣  Testing MediaDetector + MediaValidator...")
         total_tests += 1
 
-        # Create a small test file
-        test_dir = Path(tempfile.mkdtemp(prefix="interaction_test_"))
-        test_file = test_dir / "test.jpg"
-        with open(test_file, 'wb') as f:
-            f.write(b'\xFF\xD8\xFF\xE0\x00\x10JFIF\x00\x01\x01\x01\x00H\x00H\x00\x00')
-            f.write(b'Test image data' * 10)
-            f.write(b'\xFF\xD9')
+        # Use real photo from test artifacts for validation
+        test_artifacts_dir = Path(__file__).parent / "artifacts" / "photos"
+        test_file = test_artifacts_dir / "Woman_Photo_1.jpeg"
+
+        # Verify the test photo exists
+        if not test_file.exists():
+            print(f"      ❌ Test photo not found: {test_file}")
+            test_file = test_artifacts_dir / "no_faces_photo1.jpg"  # Fallback
 
         from src.media_detector import MediaDetector
         from src.media_validator import MediaValidator
@@ -326,9 +327,6 @@ def test_component_interaction():
             success_count += 1
         else:
             print(f"      ❌ Validation failed: {result.get_summary()}")
-
-        # Cleanup
-        shutil.rmtree(test_dir)
 
         # Test 2: TemporalClusterer + EventNamer integration
         print("2️⃣  Testing TemporalClusterer + EventNamer...")
