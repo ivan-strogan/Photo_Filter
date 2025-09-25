@@ -107,6 +107,13 @@ python main.py status
 python main.py config show
 python main.py config update --time-threshold 8.0
 python main.py config reset
+
+# Face recognition management
+python main.py faces scan              # Build face database from organized photos
+python main.py faces add "John Doe" photo1.jpg photo2.jpg  # Add person
+python main.py faces list              # List known people
+python main.py faces remove "John Doe" # Remove person
+python main.py faces status            # Show face recognition status
 ```
 
 ### Configuration
@@ -180,7 +187,7 @@ pytest tests/
 
 ## Development Status
 
-**Completed Features (17/24):**
+**Completed Features (18/24):**
 - ✅ Media detection and parsing
 - ✅ Metadata extraction (photos & videos)
 - ✅ Temporal clustering algorithms
@@ -189,13 +196,13 @@ pytest tests/
 - ✅ Vector database integration
 - ✅ Configuration management
 - ✅ CLI interface
+- ✅ Face detection and recognition
 
 **In Progress:**
 - ⚠️ LLM integration for intelligent event naming
 
 **Remaining Features:**
 - 🔄 Video content analysis
-- 🔄 Face detection and recognition
 - 🔄 Automated folder creation
 - 🔄 Media moving/copying system
 

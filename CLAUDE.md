@@ -142,6 +142,9 @@ python tests/basic_system_test.py
 # Run demo scripts for testing specific features
 python tests/intelligent_naming_demo.py
 python test_sample_photos_demo.py
+
+# Test face recognition functionality
+python tests/test_face_recognition.py
 ```
 
 ## Architecture
@@ -164,6 +167,8 @@ python test_sample_photos_demo.py
 - **FileOrganizer** (`src/file_organizer.py`) - Media file moving/copying operations
 - **VectorDatabase** (`src/vector_database.py`) - ChromaDB for CLIP embeddings and similarity matching
 - **MediaValidator** (`src/media_validator.py`) - File validation and corruption detection
+- **FaceRecognizer** (`src/face_recognizer.py`) - Face detection and person identification with caching
+- **PeopleDatabase** (`src/people_database.py`) - Persistent storage for known people and face encodings
 - **GPUUtils** (`src/gpu_utils.py`) - GPU acceleration management for CUDA/MPS
 
 ### Data Flow
@@ -212,6 +217,7 @@ Output format: "2024_10_24 - Mexico Vacation" or "2024_11_15 - Birthday Party - 
 - Vector embeddings are stored in `vector_db/` directory using ChromaDB
 - Configuration is persisted in `photo_filter_config.json` with automatic validation
 - Smart duplicate detection prevents re-processing already vectorized photos
+- Face recognition system supports custom cache file paths for test isolation
 - Most test files can be run directly as scripts for debugging specific components
 
 ## Known Issues & Bug Fixes Needed
