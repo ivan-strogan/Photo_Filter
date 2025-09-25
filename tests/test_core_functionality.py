@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 import tempfile
 import shutil
-from datetime import datetime
+from datetime import datetime, timedelta
 sys.path.append(str(Path(__file__).parent.parent))
 
 def test_photo_detection_and_parsing():
@@ -182,12 +182,23 @@ def test_folder_creation():
     organizer = FolderOrganizer(base_output_dir=test_dir, dry_run=True)  # Safe dry-run mode
 
     # Create mock clusters
+    from src.temporal_clustering import TemporalCluster
+
     class MockCluster:
         def __init__(self, cluster_id, event_name, date, size):
             self.cluster_id = cluster_id
             self.event_name = event_name
             self.representative_date = date
             self.size = size
+            self.suggested_name = event_name  # FolderOrganizer expects suggested_name attribute
+            # Create mock temporal_info for FolderOrganizer
+            self.temporal_info = TemporalCluster(
+                cluster_id=cluster_id,
+                start_time=date,
+                end_time=date,
+                duration=timedelta(hours=1),  # Mock duration
+                media_files=[]  # Empty for mock
+            )
 
     mock_clusters = [
         MockCluster(0, "Family Vacation", datetime(2024, 7, 15), 120),
@@ -204,7 +215,8 @@ def test_folder_creation():
         print("📋 Sample folder structure:")
 
         for cluster_id, folder_path in result['folder_mapping'].items():
-            rel_path = folder_path.relative_to(test_dir)
+            folder_path_obj = Path(folder_path) if isinstance(folder_path, str) else folder_path
+            rel_path = folder_path_obj.relative_to(test_dir)
             print(f"   Cluster {cluster_id}: {rel_path}")
 
         # Pytest assertion
