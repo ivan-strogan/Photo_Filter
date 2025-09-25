@@ -2,6 +2,75 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Version Control Guidelines
+
+**IMPORTANT**: This project is now under proper version control with GitHub. All changes must be committed and versioned properly:
+
+- **Always commit meaningful changes** with descriptive commit messages
+- **Follow conventional commit format**: `type: description` (e.g., `feat: add face recognition`, `fix: resolve event naming bug`, `docs: update README`)
+- **Test before committing**: Run `pytest tests/` to ensure all tests pass
+- **Environment files**: The `.env` file is ignored by git - only `.env.example` should be committed
+- **No direct pushes**: All code changes should be properly staged, committed, and ready for review
+- **Branch management**: Use feature branches for significant changes, merge to master when stable
+
+## GitHub Workflow Process
+
+**MANDATORY**: All code changes must follow this GitHub workflow to ensure proper tracking and audit trails:
+
+### 1. Create GitHub Issue
+```bash
+# Create issue for any task, bug fix, or feature
+gh issue create --title "type: brief description" --body "Detailed description with requirements and acceptance criteria"
+```
+
+### 2. Create Feature Branch
+```bash
+# Always include issue number in branch name
+git checkout -b feature/ISSUE#-descriptive-name
+# Example: git checkout -b feature/1-github-workflow-docs
+```
+
+### 3. Make Changes and Commit
+```bash
+# Follow conventional commit format
+git add .
+git commit -m "type: description - addresses issue #ISSUE#"
+# Example: git commit -m "docs: add GitHub workflow process - addresses issue #1"
+```
+
+### 4. Create Pull Request
+```bash
+# Push branch and create PR with issue linking
+git push -u origin feature/ISSUE#-descriptive-name
+gh pr create --title "type: description" --body "## Summary
+Brief description of changes
+
+## Closes
+Fixes #ISSUE#
+
+## Test plan
+- [ ] Tests pass
+- [ ] Code follows project conventions"
+```
+
+### 5. Auto-close Issues
+- Use "Fixes #ISSUE#", "Closes #ISSUE#", or "Resolves #ISSUE#" in PR body
+- Issues automatically close when PR is merged
+- Maintains complete audit trail from issue → branch → PR → merge
+
+### Branch Naming Convention
+- `feature/ISSUE#-short-description` - New features
+- `fix/ISSUE#-short-description` - Bug fixes
+- `docs/ISSUE#-short-description` - Documentation updates
+- `refactor/ISSUE#-short-description` - Code refactoring
+
+This workflow ensures every change is:
+- ✅ Properly tracked with GitHub issues
+- ✅ Linked to specific branches and PRs
+- ✅ Documented with clear commit messages
+- ✅ Automatically closed when merged
+- ✅ Maintains complete project history
+
 ## Project Overview
 
 Photo Filter AI is an intelligent photo organization system that automatically clusters and organizes photos/videos using temporal patterns, GPS location data, and computer vision analysis. It's designed to process iPhone photo exports and organize them into meaningful events.
