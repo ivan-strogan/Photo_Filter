@@ -95,6 +95,7 @@ class FaceRecognizer:
                  recognition_tolerance: float = 0.6,
                  min_face_size: int = 50,
                  enable_caching: bool = True,
+                 cache_file: Optional[Path] = None,
                  people_database=None):
         """Initialize face recognizer.
 
@@ -103,6 +104,7 @@ class FaceRecognizer:
             recognition_tolerance: Lower values = stricter matching (0.0-1.0)
             min_face_size: Minimum face size in pixels to detect
             enable_caching: Whether to cache face encodings
+            cache_file: Path to cache file (defaults to DATA_DIR/face_cache.json)
             people_database: PeopleDatabase instance to use for persistence
         """
         self.logger = logging.getLogger(__name__)
@@ -120,7 +122,7 @@ class FaceRecognizer:
 
         # Cache for face encodings
         self.face_cache = {}
-        self.cache_file = DATA_DIR / "face_cache.json"
+        self.cache_file = cache_file or (DATA_DIR / "face_cache.json")
 
         # Use PeopleDatabase for persistence
         if people_database is None:
