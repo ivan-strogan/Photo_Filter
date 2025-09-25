@@ -229,6 +229,39 @@ Key settings can be adjusted via the configuration system:
 
 [Add your license here]
 
+## Development Workflow
+
+**MANDATORY**: All contributions must follow this GitHub workflow for proper tracking:
+
+### 1. Create Issue First
+```bash
+gh issue create --title "type: description" --body "Requirements and acceptance criteria"
+```
+
+### 2. Create Feature Branch
+```bash
+git checkout -b feature/ISSUE#-description
+# Example: git checkout -b feature/1-github-workflow-docs
+```
+
+### 3. Make Changes & Commit
+```bash
+git add .
+git commit -m "type: description - addresses issue #ISSUE#"
+```
+
+### 4. Create Pull Request
+```bash
+git push -u origin feature/ISSUE#-description
+gh pr create --title "type: description" --body "Fixes #ISSUE#"
+```
+
+Issues automatically close when PRs are merged, maintaining complete audit trails.
+
 ## Contributing
 
-[Add contribution guidelines here]# Photo_Filter
+See [CLAUDE.md](./CLAUDE.md) for detailed development guidelines including:
+- Architecture overview and data flow
+- Testing procedures with pytest
+- Configuration management
+- Core commands and virtual environment setup# Photo_Filter
