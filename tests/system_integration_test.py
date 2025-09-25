@@ -313,8 +313,9 @@ def test_component_interaction():
         class MockMediaFile:
             def __init__(self, path):
                 self.path = Path(path)
-                self.filename = path.name
+                self.filename = self.path.name
                 self.date = datetime.now()
+                self.time = self.date  # TemporalClusterer expects 'time' attribute
                 self.file_type = 'photo'
 
         media_file = MockMediaFile(test_file)
@@ -344,7 +345,9 @@ def test_component_interaction():
         base_time = datetime(2024, 11, 1, 14, 30)
         for i in range(3):
             mock_file = MockMediaFile(f"test_{i}.jpg")
-            mock_file.date = base_time + timedelta(minutes=i*10)
+            file_time = base_time + timedelta(minutes=i*10)
+            mock_file.date = file_time
+            mock_file.time = file_time  # Update both date and time
             mock_files.append(mock_file)
 
         # Test clustering
