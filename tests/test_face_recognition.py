@@ -25,10 +25,10 @@ class FocusedFaceRecognitionTest(unittest.TestCase):
         """Set up test artifacts."""
         cls.test_artifacts_dir = Path(__file__).parent / "artifacts" / "photos"
 
-        # Sasha photos (with faces)
-        cls.sasha_photo1 = cls.test_artifacts_dir / "sasha_photo1.jpg"  # Training photo
-        cls.sasha_photo2 = cls.test_artifacts_dir / "sasha_photo2.jpg"  # Test photo 1
-        cls.sasha_photo3 = cls.test_artifacts_dir / "sasha_photo3.jpg"  # Test photo 2
+        # Woman photos (with faces)
+        cls.sasha_photo1 = cls.test_artifacts_dir / "Woman_Photo_1.jpeg"  # Training photo
+        cls.sasha_photo2 = cls.test_artifacts_dir / "Woman_Photo_2.jpg"  # Test photo 1
+        cls.sasha_photo3 = cls.test_artifacts_dir / "Woman_Photo_3.jpg"  # Test photo 2
 
         # No face photos
         cls.no_faces_photo1 = cls.test_artifacts_dir / "no_faces_photo1.jpg"
