@@ -222,22 +222,37 @@ class EventNamer:
         """
         print(f"🎯 EVENT NAMING: Starting event name generation for cluster with {len(cluster_data.get('files', []))} files")
 
+        # Create detailed diagnostic log
+        self._log_diagnostics("=== EVENT NAMING DIAGNOSTICS START ===")
+        self._log_diagnostics(f"Cluster data keys: {list(cluster_data.keys())}")
+        self._log_diagnostics(f"Files count: {len(cluster_data.get('files', []))}")
+        self._log_diagnostics(f"LLM enabled: {self.enable_llm}")
+        self._log_diagnostics(f"Vector similarity enabled: {self.enable_vector_similarity}")
+
         try:
             # Extract key information from cluster
             print(f"🔍 EVENT NAMING: Building context from cluster data...")
             context = self._build_event_context(cluster_data)
             print(f"🔍 EVENT NAMING: Context built - location: {context.get('location', {}).get('city', 'Unknown')}")
 
+            # Log detailed context information
+            self._log_diagnostics("--- EXTRACTED CONTEXT ---")
+            for section_key, section_data in context.items():
+                self._log_diagnostics(f"{section_key}: {section_data}")
+
             # Check cache first (save API costs and time)
             cache_key = self._generate_cache_key(context)
             print(f"💾 EVENT NAMING: Cache key: {cache_key}")
+            self._log_diagnostics(f"Cache key: {cache_key}")
             if cache_key in self.naming_cache:
                 cached_name = self.naming_cache[cache_key]
                 print(f"💾 EVENT NAMING: Found cached name: {cached_name}")
+                self._log_diagnostics(f"CACHE HIT: {cached_name}")
                 self.logger.debug(f"Using cached name for similar event")
                 return cached_name
 
             print(f"💾 EVENT NAMING: No cached name found, generating new one...")
+            self._log_diagnostics("CACHE MISS - generating new name")
 
             # Try different naming approaches in order of sophistication
             event_name = None
@@ -246,20 +261,24 @@ class EventNamer:
             print(f"🤖 EVENT NAMING: LLM enabled: {self.enable_llm}")
             if self.enable_llm:
                 print(f"🤖 EVENT NAMING: Attempting LLM-based naming...")
+                self._log_diagnostics("--- ATTEMPTING LLM NAMING ---")
                 event_name = self._generate_llm_name(context)
                 print(f"🤖 EVENT NAMING: LLM result: {event_name}")
+                self._log_diagnostics(f"LLM result: {event_name}")
+            else:
+                self._log_diagnostics("LLM naming DISABLED")
 
-            # Approach 2: Template-based naming (good fallback)
-            if not event_name:
-                print(f"📋 EVENT NAMING: Attempting template-based naming...")
-                event_name = self._generate_template_name(context)
-                print(f"📋 EVENT NAMING: Template result: {event_name}")
+            # Approach 2: Template-based naming (DISABLED - generated poor generic names)
+            # if not event_name:
+            #     print(f"📋 EVENT NAMING: Attempting template-based naming...")
+            #     event_name = self._generate_template_name(context)
+            #     print(f"📋 EVENT NAMING: Template result: {event_name}")
 
-            # Approach 3: Simple rule-based naming (always works)
-            if not event_name:
-                print(f"⚙️ EVENT NAMING: Attempting simple rule-based naming...")
-                event_name = self._generate_simple_name(context)
-                print(f"⚙️ EVENT NAMING: Simple result: {event_name}")
+            # Approach 3: Simple rule-based naming (DISABLED - generated poor generic names)
+            # if not event_name:
+            #     print(f"⚙️ EVENT NAMING: Attempting simple rule-based naming...")
+            #     event_name = self._generate_simple_name(context)
+            #     print(f"⚙️ EVENT NAMING: Simple result: {event_name}")
 
             print(f"✅ EVENT NAMING: Generated name before validation: {event_name}")
 
@@ -274,12 +293,18 @@ class EventNamer:
                 self._save_cache()
                 print(f"💾 EVENT NAMING: Cache saved successfully")
             else:
-                # Use simple fallback for rejected names
-                print(f"❌ EVENT NAMING: Name rejected, using simple fallback...")
-                event_name = self._generate_simple_name(context)
-                print(f"⚙️ EVENT NAMING: Fallback result: {event_name}")
-                self.logger.info(f"Used simple fallback after rejection: {event_name}")
+                # Name was rejected by validation - return None to indicate no good name found
+                print(f"❌ EVENT NAMING: Name rejected by validation, no fallback used")
+                event_name = None
+                self.logger.info(f"Event name rejected by validation, no fallback applied")
 
+            # Add final diagnostics
+            if event_name:
+                self._log_diagnostics(f"SUCCESS: Final event name: {event_name}")
+            else:
+                self._log_diagnostics("NO EVENT NAME GENERATED - returning None to skip event")
+
+            self._log_diagnostics("=== EVENT NAMING DIAGNOSTICS END ===")
             print(f"🎉 EVENT NAMING: Final event name: {event_name}")
             self.logger.info(f"Generated event name: {event_name}")
             return event_name
@@ -1292,6 +1317,21 @@ Generate ONLY the folder name using the EXACT location provided above:"""
             self.logger.warning(f"Could not save naming cache: {e}")
             import traceback
             traceback.print_exc()
+
+    def _log_diagnostics(self, message: str):
+        """Log detailed diagnostics to a separate diagnostics file."""
+        try:
+            diagnostics_file = DATA_DIR / "event_naming_diagnostics.log"
+
+            # Ensure data directory exists
+            DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+            with open(diagnostics_file, 'a', encoding='utf-8') as f:
+                timestamp = datetime.now().isoformat()
+                f.write(f"[{timestamp}] {message}\n")
+        except Exception as e:
+            # Don't let diagnostic logging break the main functionality
+            self.logger.warning(f"Could not write diagnostics: {e}")
 
     def _format_people_names(self, people_detected: List[str]) -> str:
         """Format people names for event naming.

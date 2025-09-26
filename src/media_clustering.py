@@ -12,6 +12,11 @@ from .geocoding import LocationGeocoder, LocationInfo
 from .metadata_extractor import MetadataExtractor
 from .event_namer import EventNamer
 
+try:
+    from .config import DATA_DIR
+except ImportError:
+    from config import DATA_DIR
+
 @dataclass
 class MediaCluster:
     """Comprehensive media cluster with multiple signals."""
@@ -121,26 +126,51 @@ class MediaClusteringEngine:
             List of MediaCluster objects
         """
         if not media_files:
+            self._log_clustering_diagnostics("Empty media files list - returning empty clusters")
             return []
 
+        self._log_clustering_diagnostics(f"=== CLUSTERING PIPELINE START ===")
+        self._log_clustering_diagnostics(f"Input: {len(media_files)} media files")
         self.logger.info(f"Starting comprehensive clustering of {len(media_files)} files")
 
+        # Log file details
+        files_with_time = [f for f in media_files if f.time is not None]
+        files_with_gps = [f for f in media_files if getattr(f, 'gps_coordinates', None) is not None]
+        self._log_clustering_diagnostics(f"Files with timestamps: {len(files_with_time)}/{len(media_files)}")
+        self._log_clustering_diagnostics(f"Files with GPS: {len(files_with_gps)}/{len(media_files)}")
+
         # Step 1: Temporal clustering (primary signal)
+        self._log_clustering_diagnostics(f"Step 1: Starting temporal clustering...")
         temporal_clusters = self._perform_temporal_clustering(media_files)
 
         # Step 2: Enhance with location data
+        self._log_clustering_diagnostics(f"Step 2: Enhancing {len(temporal_clusters)} temporal clusters with location data...")
         enhanced_clusters = self._enhance_with_location_data(temporal_clusters)
 
         # Step 3: Refine with location-based splitting
+        self._log_clustering_diagnostics(f"Step 3: Refining {len(enhanced_clusters)} clusters with location clustering...")
         location_refined_clusters = self._refine_with_location_clustering(enhanced_clusters)
 
         # Step 4: Enhance with people-based clustering
+        self._log_clustering_diagnostics(f"Step 4: Enhancing {len(location_refined_clusters)} clusters with people data...")
         people_enhanced_clusters = self._enhance_with_people_data(location_refined_clusters)
 
         # Step 5: Calculate confidence scores
+        self._log_clustering_diagnostics(f"Step 5: Calculating confidence scores for {len(people_enhanced_clusters)} clusters...")
         final_clusters = self._calculate_confidence_scores(people_enhanced_clusters)
 
         self.logger.info(f"Created {len(final_clusters)} comprehensive clusters")
+
+        # Final diagnostics
+        total_files_in_clusters = sum(len(cluster.media_files) for cluster in final_clusters)
+        self._log_clustering_diagnostics(f"=== CLUSTERING PIPELINE COMPLETE ===")
+        self._log_clustering_diagnostics(f"Output: {len(final_clusters)} clusters containing {total_files_in_clusters} files")
+        self._log_clustering_diagnostics(f"Files clustered: {total_files_in_clusters}/{len(media_files)}")
+
+        if len(media_files) != total_files_in_clusters:
+            missing = len(media_files) - total_files_in_clusters
+            self._log_clustering_diagnostics(f"WARNING: {missing} files not included in any cluster")
+
         return final_clusters
 
     def _perform_temporal_clustering(self, media_files: List[MediaFile]) -> List[TemporalCluster]:
@@ -617,3 +647,14 @@ class MediaClusteringEngine:
             return f"{date_str} - All Day Event"
         else:
             return f"{date_str} - Event"
+
+    def _log_clustering_diagnostics(self, message: str):
+        """Log detailed clustering diagnostics to a separate diagnostics file."""
+        try:
+            diagnostics_file = DATA_DIR / "clustering_diagnostics.log"
+            DATA_DIR.mkdir(parents=True, exist_ok=True)
+            with open(diagnostics_file, 'a', encoding='utf-8') as f:
+                timestamp = datetime.now().isoformat()
+                f.write(f"[{timestamp}] {message}\n")
+        except Exception as e:
+            self.logger.warning(f"Could not write clustering diagnostics: {e}")

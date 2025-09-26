@@ -227,9 +227,8 @@ class OrganizedPhotosScanner:
 
                 print(f"🔍 DEBUG: Processing batch of {len(batch)} photos")
                 for photo in batch:
-                    # Use same ID format as vectorizer: timestamp_filename
-                    timestamp = photo.time.strftime("%Y%m%d_%H%M%S")
-                    photo_id = f"{timestamp}_{photo.filename}"
+                    # Use same ID format as vectorizer (avoid redundant timestamps)
+                    photo_id = self._create_file_id(photo)
                     print(f"🔍 DEBUG: Checking photo_id='{photo_id}' filename='{photo.filename}' (was using path: {str(photo.path)})")
 
                     photo_exists = self.vector_db.photo_exists(photo_id)
@@ -369,6 +368,32 @@ class OrganizedPhotosScanner:
         except Exception as e:
             self.logger.error(f"Error searching similar photos: {e}")
             return []
+
+    def _create_file_id(self, media_file) -> str:
+        """Create a unique ID for a media file (matching photo_vectorizer logic).
+
+        Args:
+            media_file: MediaFile object
+
+        Returns:
+            Unique file ID string
+        """
+        filename = media_file.filename
+
+        # Check if filename already contains timestamp (iPhone format: IMG_YYYYMMDD_HHMMSS.JPG)
+        import re
+        iphone_pattern = r'^(IMG|MOV)_\d{8}_\d{6}\.(JPG|MOV|jpg|mov)$'
+
+        if re.match(iphone_pattern, filename):
+            # Filename already has timestamp, use it directly
+            print(f"📱 SCANNER: Using iPhone filename as photo_id: {filename}")
+            return filename
+        else:
+            # Non-iPhone filename, add timestamp prefix
+            timestamp = media_file.time.strftime("%Y%m%d_%H%M%S")
+            photo_id = f"{timestamp}_{filename}"
+            print(f"📷 SCANNER: Created photo_id with timestamp: {photo_id}")
+            return photo_id
 
     def cleanup(self):
         """Clean up resources."""
