@@ -374,11 +374,18 @@ class MediaClusteringEngine:
         Returns:
             Enhanced clusters with people information
         """
-        if not self.face_recognizer or not self.face_recognizer.enabled:
+        # Detailed face recognition diagnostics
+        self._log_clustering_diagnostics(f"Face recognition check: face_recognizer={self.face_recognizer is not None}")
+        if self.face_recognizer:
+            self._log_clustering_diagnostics(f"Face recognizer enabled: {getattr(self.face_recognizer, 'enabled', 'no enabled attribute')}")
+
+        if not self.face_recognizer or not getattr(self.face_recognizer, 'enabled', True):
             self.logger.debug("Face recognition not available, skipping people enhancement")
+            self._log_clustering_diagnostics("SKIPPING: Face recognition not available or disabled")
             return clusters
 
         self.logger.info("Enhancing clusters with people data...")
+        self._log_clustering_diagnostics(f"PROCESSING: Starting face detection on {len(clusters)} clusters")
         print(f"DEBUG PEOPLE: Input clusters: {len(clusters)}, files: {sum(len(c.media_files) for c in clusters)}")
 
         enhanced_clusters = []
@@ -395,10 +402,47 @@ class MediaClusteringEngine:
                 for media_file in cluster.media_files:
                     if media_file.file_type == 'photo':
                         try:
+                            # Detailed diagnostic logging for face detection
+                            self._log_clustering_diagnostics(f"Processing photo for face detection: {media_file.filename}")
+                            self._log_clustering_diagnostics(f"Photo path: {media_file.path}")
+
                             result = self.face_recognizer.detect_faces(media_file.path)
+                            self._log_clustering_diagnostics(f"Face detection result for {media_file.filename}: error={result.error}, faces_detected={result.faces_detected}")
+
                             if not result.error:
                                 people_detected = result.get_people_detected()
                                 face_count = result.faces_detected
+
+                                self._log_clustering_diagnostics(f"Face detection details for {media_file.filename}: face_count={face_count}, people_detected={people_detected}")
+
+                                # Log face distance calculations for recognition attempts
+                                if hasattr(result, 'face_distances') and result.face_distances:
+                                    for person_name, distance in result.face_distances.items():
+                                        self._log_clustering_diagnostics(f"Face distance for {media_file.filename}: {person_name} = {distance}")
+
+                                # Log detailed recognition attempts with distances
+                                if hasattr(result, 'recognition_results') and result.recognition_results:
+                                    for face_idx, recognition_data in enumerate(result.recognition_results):
+                                        self._log_clustering_diagnostics(f"Face {face_idx} in {media_file.filename}: {recognition_data}")
+
+                                # Check if Sasha was specifically attempted for recognition
+                                if face_count > 0:
+                                    sasha_attempted = False
+                                    if hasattr(result, 'face_distances') and 'Sasha' in result.face_distances:
+                                        sasha_distance = result.face_distances['Sasha']
+                                        self._log_clustering_diagnostics(f"Sasha recognition attempt in {media_file.filename}: distance={sasha_distance}")
+                                        sasha_attempted = True
+
+                                    if not sasha_attempted:
+                                        self._log_clustering_diagnostics(f"Sasha was NOT attempted for recognition in {media_file.filename} (faces found: {face_count})")
+
+                                # Log summary of recognition results
+                                if face_count > 0 and not people_detected:
+                                    self._log_clustering_diagnostics(f"Faces detected but not recognized in {media_file.filename}: {face_count} faces found, no matches")
+                                elif face_count > 0 and people_detected:
+                                    self._log_clustering_diagnostics(f"Faces successfully recognized in {media_file.filename}: {len(people_detected)} people identified from {face_count} faces")
+                                elif face_count == 0:
+                                    self._log_clustering_diagnostics(f"No faces detected in {media_file.filename}")
 
                                 if people_detected:
                                     cluster_people.update(people_detected)
@@ -408,6 +452,7 @@ class MediaClusteringEngine:
 
                         except Exception as e:
                             self.logger.warning(f"Face detection failed for {media_file.filename}: {e}")
+                            self._log_clustering_diagnostics(f"Exception during face detection for {media_file.filename}: {e}")
 
                 # Calculate people consistency (how many photos have the same people)
                 if photos_with_people and len(cluster_people) > 0:
