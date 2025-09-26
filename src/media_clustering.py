@@ -467,18 +467,21 @@ class MediaClusteringEngine:
                                  if count >= len(photos_with_people) * 0.3]  # Person in at least 30% of photos
 
                     if main_people:
-                        people_consistency_score = len([p for _, people in photos_with_people
+                        people_consistency_score = len([_ for _, people in photos_with_people
                                                       if any(person in people for person in main_people)]) / len(photos_with_people)
 
                 # Update cluster with people information
                 enhanced_cluster = MediaCluster(
                     cluster_id=cluster.cluster_id,
                     media_files=cluster.media_files,
-                    primary_location=cluster.primary_location,
-                    date_range=cluster.date_range,
-                    suggested_name=cluster.suggested_name,
-                    confidence_score=cluster.confidence_score,
+                    temporal_info=cluster.temporal_info,
+                    location_info=cluster.location_info,
+                    dominant_location=cluster.dominant_location,
+                    gps_coordinates=cluster.gps_coordinates,
+                    content_tags=cluster.content_tags,
                     people_detected=list(cluster_people),
+                    confidence_score=cluster.confidence_score,
+                    suggested_name=cluster.suggested_name,
                     metadata=cluster.metadata.copy() if cluster.metadata else {}
                 )
 
