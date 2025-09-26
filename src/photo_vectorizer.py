@@ -406,9 +406,22 @@ class PhotoVectorizer:
         Returns:
             Unique file ID string
         """
-        # Use filename and timestamp for unique ID
-        timestamp = media_file.time.strftime("%Y%m%d_%H%M%S")
-        return f"{timestamp}_{media_file.filename}"
+        filename = media_file.filename
+
+        # Check if filename already contains timestamp (iPhone format: IMG_YYYYMMDD_HHMMSS.JPG)
+        import re
+        iphone_pattern = r'^(IMG|MOV)_\d{8}_\d{6}\.(JPG|MOV|jpg|mov)$'
+
+        if re.match(iphone_pattern, filename):
+            # Filename already has timestamp, use it directly
+            self.logger.debug(f"📱 VECTORIZER: Using iPhone filename as photo_id: {filename}")
+            return filename
+        else:
+            # Non-iPhone filename, add timestamp prefix
+            timestamp = media_file.time.strftime("%Y%m%d_%H%M%S")
+            photo_id = f"{timestamp}_{filename}"
+            self.logger.debug(f"📷 VECTORIZER: Created photo_id with timestamp: {photo_id}")
+            return photo_id
 
     def compute_similarity(self, embedding1: np.ndarray, embedding2: np.ndarray) -> float:
         """Compute cosine similarity between two embeddings.
