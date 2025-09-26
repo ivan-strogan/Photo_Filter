@@ -540,7 +540,7 @@ class PhotoOrganizerPipeline:
             }
 
     def _initialize_clustering_engine_with_vector_db(self, vector_db=None, photo_vectorizer=None):
-        """Initialize clustering engine with vector database components."""
+        """Initialize clustering engine with vector database and face recognition components."""
         try:
             # Get vector database and photo vectorizer from scanner if not provided
             if vector_db is None and photo_vectorizer is None:
@@ -549,10 +549,44 @@ class PhotoOrganizerPipeline:
                 if hasattr(self.organized_photos_scanner, 'vectorizer') and self.organized_photos_scanner.vectorizer:
                     photo_vectorizer = self.organized_photos_scanner.vectorizer
 
-            # Initialize clustering engine with vector components
+            # Initialize face recognition components
+            face_recognizer = None
+            people_database = None
+
+            try:
+                from .config_manager import get_config
+                config = get_config()
+
+                # Only initialize face recognition if enabled in config
+                if config.faces.enable_face_detection:
+                    from .face_recognizer import FaceRecognizer
+                    from .people_database import PeopleDatabase
+
+                    # Initialize people database
+                    people_database = PeopleDatabase()
+
+                    # Initialize face recognizer with people database
+                    face_recognizer = FaceRecognizer(
+                        detection_model=config.faces.detection_model,
+                        recognition_tolerance=config.faces.recognition_tolerance,
+                        people_database=people_database
+                    )
+
+                    self.logger.info("Face recognition components initialized for clustering")
+                else:
+                    self.logger.info("Face recognition disabled in configuration - clustering without people detection")
+
+            except Exception as e:
+                self.logger.warning(f"Could not initialize face recognition components: {e}")
+                face_recognizer = None
+                people_database = None
+
+            # Initialize clustering engine with all components
             self.clustering_engine = MediaClusteringEngine(
                 vector_db=vector_db,
-                photo_vectorizer=photo_vectorizer
+                photo_vectorizer=photo_vectorizer,
+                face_recognizer=face_recognizer,
+                people_database=people_database
             )
 
             if vector_db and photo_vectorizer:
@@ -562,9 +596,35 @@ class PhotoOrganizerPipeline:
 
         except Exception as e:
             self.logger.warning(f"Error initializing clustering engine with vector DB: {e}")
-            # Fallback to basic clustering engine
-            self.clustering_engine = MediaClusteringEngine()
-            self.logger.info("Clustering engine initialized with basic configuration")
+            # Fallback to basic clustering engine (still try to include face recognition)
+            try:
+                from .config_manager import get_config
+                config = get_config()
+
+                if config.faces.enable_face_detection:
+                    from .face_recognizer import FaceRecognizer
+                    from .people_database import PeopleDatabase
+
+                    people_database = PeopleDatabase()
+                    face_recognizer = FaceRecognizer(
+                        detection_model=config.faces.detection_model,
+                        recognition_tolerance=config.faces.recognition_tolerance,
+                        people_database=people_database
+                    )
+
+                    self.clustering_engine = MediaClusteringEngine(
+                        face_recognizer=face_recognizer,
+                        people_database=people_database
+                    )
+                    self.logger.info("Clustering engine initialized with basic configuration + face recognition")
+                else:
+                    self.clustering_engine = MediaClusteringEngine()
+                    self.logger.info("Clustering engine initialized with basic configuration (no face recognition)")
+
+            except Exception as fallback_error:
+                self.logger.warning(f"Error initializing face recognition in fallback: {fallback_error}")
+                self.clustering_engine = MediaClusteringEngine()
+                self.logger.info("Clustering engine initialized with minimal configuration")
 
     def _generate_pipeline_report(self, pipeline_start_time: datetime) -> Dict[str, Any]:
         """Generate comprehensive pipeline report."""
