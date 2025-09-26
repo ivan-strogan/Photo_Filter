@@ -49,12 +49,12 @@ except ImportError:
 
 @pytest.fixture
 def mock_people_database(temp_test_dir):
-    """Create a mock people database with Sasha."""
+    """Create a mock people database with Elena Rodriguez."""
     people_db_file = temp_test_dir / "people_database.json"
     people_data = {
         "people": {
-            "Sasha Strogan": {
-                "person_id": "sasha_001",
+            "Elena Rodriguez": {
+                "person_id": "elena_001",
                 "encodings": [[0.1, 0.2, 0.3] * 43]  # Mock 128-dimensional encoding
             }
         }
@@ -181,14 +181,27 @@ def test_face_recognition_integration_with_mocked_detection(mock_people_database
 
     # Mock the detect_faces method to return controlled results
     def mock_detect_faces(photo_path):
-        """Mock face detection that recognizes Sasha in the first photo."""
-        result = FaceRecognitionResult()
+        """Mock face detection that recognizes Elena in the first photo."""
         if "163030" in str(photo_path):  # First test photo
-            result.faces_detected = 2
-            result.people_detected = {"Sasha Strogan"}
+            # Create a face for Elena
+            from src.face_recognizer import Face
+            elena_face = Face(
+                top=100, right=200, bottom=200, left=100,
+                confidence=0.9, person_id="Elena Rodriguez"
+            )
+            result = FaceRecognitionResult(
+                image_path=str(photo_path),
+                faces_detected=2,
+                faces=[elena_face],
+                processing_time=0.1
+            )
         else:
-            result.faces_detected = 0
-            result.people_detected = set()
+            result = FaceRecognitionResult(
+                image_path=str(photo_path),
+                faces_detected=0,
+                faces=[],
+                processing_time=0.1
+            )
         return result
 
     # Patch the detect_faces method
@@ -201,11 +214,13 @@ def test_face_recognition_integration_with_mocked_detection(mock_people_database
     )
 
     # Run face recognition enhancement
-    engine._enhance_with_people_data([test_cluster])
+    enhanced_clusters = engine._enhance_with_people_data([test_cluster])
 
     # Verify cluster was enhanced with people data
-    assert test_cluster.people_detected is not None, "Cluster should have people data"
-    assert "Sasha Strogan" in test_cluster.people_detected, "Sasha should be detected"
+    assert len(enhanced_clusters) == 1, "Should return one enhanced cluster"
+    enhanced_cluster = enhanced_clusters[0]
+    assert enhanced_cluster.people_detected is not None, "Cluster should have people data"
+    assert "Elena Rodriguez" in enhanced_cluster.people_detected, "Elena should be detected"
 
     print("✅ Face recognition successfully integrated into clustering pipeline")
 
@@ -308,8 +323,8 @@ def test_regression_issue_13_face_recognition_pipeline_integration():
         # Verify the face recognizer is properly configured
         assert hasattr(clustering_engine.face_recognizer, 'detect_faces'), \
             "Face recognizer should have detect_faces method"
-        assert hasattr(clustering_engine.people_database, 'get_all_people'), \
-            "People database should have get_all_people method"
+        assert hasattr(clustering_engine.people_database, 'list_people'), \
+            "People database should have list_people method"
 
         print("✅ REGRESSION TEST PASSED: Issue #13 bug is fixed and will not reoccur")
 
