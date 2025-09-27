@@ -109,42 +109,81 @@ python main.py config update --time-threshold 8.0  # Update config parameters
 
 ### Testing
 
+**Test Architecture**: The project uses a two-tier test architecture with separate unit and integration tests for optimal development workflow:
+
+```
+tests/
+├── unit/                     # Fast unit tests (~10 seconds total)
+│   ├── test_clustering_face_unit.py                    # Face recognition unit tests
+│   └── test_clustering_face_integration_fake_BACKUP.py # Legacy mocked tests (backup)
+├── integration/              # Slower integration tests (~10 seconds total)
+│   └── test_clustering_face_integration.py             # Real photo face recognition tests
+├── artifacts/               # Test data and fixtures
+│   └── photos/             # Real photos for integration testing
+├── test_*.py               # Legacy test files (various components)
+└── README.md              # Detailed testing documentation
+```
+
+#### Development Workflow Commands
+
 ```bash
-# Run all tests (RSpec-style - recommended)
-pytest tests/
+# Development (fast feedback) - ~10 seconds
+pytest tests/unit/ -v                    # Run only unit tests
 
-# Run all tests with verbose output
-pytest tests/ -v
+# Pre-commit validation - ~20 seconds
+pytest tests/ -m "unit or integration"   # Run both unit and integration tests
 
-# Run specific test file
-pytest tests/test_content_analyzer.py
+# Quick component testing
+pytest tests/unit/test_clustering_face_unit.py -v        # Face recognition unit tests
+pytest tests/integration/test_clustering_face_integration.py -v  # Face recognition integration tests
 
-# Run tests matching a pattern
-pytest -k "event_naming"
-
-# Run tests by category/marker
-pytest -m "unit"                # Run only unit tests
+# Test by markers (recommended)
+pytest -m "unit"                # Fast unit tests only
+pytest -m "integration"         # Real component integration tests
+pytest -m "regression"          # Regression prevention tests
 pytest -m "not slow"            # Skip slow tests
-pytest -m "integration"         # Run only integration tests
 
-# Show test coverage
-pytest tests/ --cov=src
+# Pattern matching
+pytest -k "face_recognition"    # Tests containing "face_recognition"
+pytest -k "clustering"         # Tests containing "clustering"
 
-# Run individual test files (legacy method)
+# Coverage analysis
+pytest tests/ --cov=src --cov-report=html
+
+# All tests with verbose output
+pytest tests/ -v
+```
+
+#### Legacy Test Files (Individual Components)
+
+```bash
+# Run individual component tests (legacy approach)
 python tests/test_content_analyzer.py
 python tests/test_location_verification.py
 python tests/test_components.py
 
-# Run comprehensive system tests
+# System integration tests
 python tests/system_integration_test.py
 python tests/basic_system_test.py
 
-# Run demo scripts for testing specific features
+# Demo scripts for specific features
 python tests/intelligent_naming_demo.py
 python test_sample_photos_demo.py
+```
 
-# Test face recognition functionality
-python tests/test_face_recognition.py
+#### Face Recognition Testing
+
+The face recognition system has comprehensive test coverage:
+
+- **Unit Tests** (`tests/unit/test_clustering_face_unit.py`): Fast tests with mocked components, validates component initialization, configuration, and logic without external dependencies
+- **Integration Tests** (`tests/integration/test_clustering_face_integration.py`): Real photo tests using actual face recognition with test photos from `tests/artifacts/photos/`
+- **Regression Tests**: Prevents regression of Issue #13 (face recognition integration in clustering pipeline)
+
+```bash
+# Run face recognition tests specifically
+pytest tests/ -k "face" -v                    # All face recognition tests
+pytest tests/unit/test_clustering_face_unit.py -v        # Unit tests only
+pytest tests/integration/test_clustering_face_integration.py -v  # Integration tests only
 ```
 
 ## Architecture
