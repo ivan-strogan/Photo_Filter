@@ -8,13 +8,15 @@ This project uses a modern two-tier test architecture designed to provide fast d
 
 ```
 tests/
-├── unit/                     # Fast unit tests (~10 seconds total)
+├── unit/                     # Fast unit tests (~15 seconds total)
 │   ├── __init__.py
-│   ├── test_clustering_face_unit.py                    # Face recognition unit tests
+│   ├── test_clustering_face_unit.py                    # Face recognition unit tests (17 tests)
+│   ├── test_event_namer_unit.py                        # Event naming unit tests (6 tests)
 │   └── test_clustering_face_integration_fake_BACKUP.py # Legacy mocked tests (backup)
-├── integration/              # Real component integration tests (~10 seconds total)
+├── integration/              # Real component integration tests (~15 seconds total)
 │   ├── __init__.py
-│   └── test_clustering_face_integration.py             # Real photo face recognition tests
+│   ├── test_clustering_face_integration.py             # Real photo face recognition tests (5 tests)
+│   └── test_event_naming_integration.py                # Event naming integration tests (5 tests)
 ├── artifacts/               # Test data and fixtures
 │   ├── photos/             # Real photos for integration testing
 │   │   ├── Woman_Photo_1.jpeg    # Elena Rodriguez (known person)
@@ -188,6 +190,27 @@ pytest -m "unit or (integration and not slow)"
 - Real people database creation and management
 - Issue #13 regression prevention with real data
 
+## Event Naming Test Coverage
+
+### Unit Tests (`test_event_namer_unit.py`)
+
+**Tests 6 scenarios** including:
+- Ollama prompt location constraint validation
+- Anti-hallucination prompt engineering tests
+- Location constraint enforcement with unknown locations
+- Format requirement validation
+- Error handling for LLM failures
+- Issue #14 regression prevention (location hallucination)
+
+### Integration Tests (`test_event_naming_integration.py`)
+
+**Tests 5 real-world scenarios** including:
+- End-to-end event naming with real Edmonton GPS data
+- Context extraction accuracy preservation
+- Validation system accepting correct location names
+- Validation system rejecting hallucinated locations
+- Issue #14 end-to-end regression prevention
+
 ## Test Data Management
 
 ### Real Photos (`tests/artifacts/photos/`)
@@ -268,9 +291,13 @@ def test_real_workflow_with_actual_data():
 
 ### Current Performance (as of implementation)
 
-- **Unit Tests**: 17 tests in ~10 seconds (0.6 seconds average)
-- **Integration Tests**: 5 tests in ~10 seconds (2 seconds average)
-- **Total Test Suite**: 22 tests in ~20 seconds
+- **Unit Tests**: 23 tests in ~15 seconds (0.7 seconds average)
+  - Face recognition: 17 tests in ~10 seconds
+  - Event naming: 6 tests in ~6 seconds
+- **Integration Tests**: 10 tests in ~15 seconds (1.5 seconds average)
+  - Face recognition: 5 tests in ~10 seconds
+  - Event naming: 5 tests in ~6 seconds
+- **Total Test Suite**: 33 tests in ~30 seconds
 - **Legacy Tests**: Various (maintained for backward compatibility)
 
 ### Performance Targets

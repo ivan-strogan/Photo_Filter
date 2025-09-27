@@ -574,11 +574,15 @@ class EventNamer:
             date = context['temporal']['date']
             time_of_day = context['temporal']['time_of_day']
             is_holiday = context['temporal']['is_holiday']
+            location_city = context['location']['city'] or 'Unknown'
 
             simple_prompt = f"Create a short folder name for photos from {date} {time_of_day}"
             if is_holiday:
                 simple_prompt += " holiday"
-            simple_prompt += ". Just the name, like: Family BBQ"
+
+            # CRITICAL: Include location constraint to prevent hallucination
+            simple_prompt += f" in {location_city}. ONLY use {location_city} as the location. DO NOT use other cities like Paris, Vegas, etc."
+            simple_prompt += f" Format: {date} - Event Name - {location_city}. Example: {date} - Family BBQ - {location_city}"
 
             data = {
                 "model": self.ollama_model,
