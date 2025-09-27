@@ -113,11 +113,13 @@ python main.py config update --time-threshold 8.0  # Update config parameters
 
 ```
 tests/
-├── unit/                     # Fast unit tests (~10 seconds total)
-│   ├── test_clustering_face_unit.py                    # Face recognition unit tests
+├── unit/                     # Fast unit tests (~15 seconds total)
+│   ├── test_clustering_face_unit.py                    # Face recognition unit tests (17 tests)
+│   ├── test_event_namer_unit.py                        # Event naming unit tests (6 tests)
 │   └── test_clustering_face_integration_fake_BACKUP.py # Legacy mocked tests (backup)
-├── integration/              # Slower integration tests (~10 seconds total)
-│   └── test_clustering_face_integration.py             # Real photo face recognition tests
+├── integration/              # Slower integration tests (~15 seconds total)
+│   ├── test_clustering_face_integration.py             # Real photo face recognition tests (5 tests)
+│   └── test_event_naming_integration.py                # Event naming integration tests (5 tests)
 ├── artifacts/               # Test data and fixtures
 │   └── photos/             # Real photos for integration testing
 ├── test_*.py               # Legacy test files (various components)
@@ -127,10 +129,10 @@ tests/
 #### Development Workflow Commands
 
 ```bash
-# Development (fast feedback) - ~10 seconds
+# Development (fast feedback) - ~15 seconds
 pytest tests/unit/ -v                    # Run only unit tests
 
-# Pre-commit validation - ~20 seconds
+# Pre-commit validation - ~30 seconds
 pytest tests/ -m "unit or integration"   # Run both unit and integration tests
 
 # Quick component testing
@@ -184,6 +186,21 @@ The face recognition system has comprehensive test coverage:
 pytest tests/ -k "face" -v                    # All face recognition tests
 pytest tests/unit/test_clustering_face_unit.py -v        # Unit tests only
 pytest tests/integration/test_clustering_face_integration.py -v  # Integration tests only
+```
+
+#### Event Naming Testing
+
+The event naming system has comprehensive test coverage for LLM integration and location accuracy:
+
+- **Unit Tests** (`tests/unit/test_event_namer_unit.py`): Fast tests with mocked LLM responses, validates prompt generation, location constraints, and anti-hallucination measures
+- **Integration Tests** (`tests/integration/test_event_naming_integration.py`): End-to-end tests with real context processing and validation system verification
+- **Regression Tests**: Prevents regression of Issue #14 (LLM location hallucination) and validates Issue #15 (validation system accuracy)
+
+```bash
+# Run event naming tests specifically
+pytest tests/ -k "event_nam" -v               # All event naming tests
+pytest tests/unit/test_event_namer_unit.py -v            # Unit tests only
+pytest tests/integration/test_event_naming_integration.py -v  # Integration tests only
 ```
 
 ## Architecture
