@@ -82,6 +82,30 @@ Photo_Filter/
 
 ## Usage
 
+### Prerequisites - Start Ollama LLM Server
+
+**IMPORTANT**: Before running the photo organization pipeline, you must start the Ollama LLM server for intelligent event naming.
+
+```bash
+# In a separate terminal window, start Ollama server
+ollama serve
+```
+
+Keep this terminal running while you use the Photo Filter app. The event naming system requires an active LLM connection and will fail if Ollama is not running.
+
+**Install Ollama** (if not already installed):
+```bash
+# macOS/Linux
+curl https://ollama.ai/install.sh | sh
+
+# Or download from https://ollama.ai
+```
+
+**Download the required model**:
+```bash
+ollama pull llama3.1:8b
+```
+
 ### CLI Commands
 
 ```bash
