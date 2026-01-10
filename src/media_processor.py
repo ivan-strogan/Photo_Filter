@@ -29,7 +29,7 @@ class MediaProcessor:
         # Initialize components
         self.media_detector = MediaDetector()
         self.metadata_extractor = MetadataExtractor()
-        self.content_analyzer = ContentAnalyzer(use_gpu=USE_GPU, enable_local_models=False)
+        self.content_analyzer = ContentAnalyzer(use_gpu=USE_GPU, enable_local_models=True)
         self.clustering_engine = MediaClusteringEngine(
             time_threshold_hours=TIME_THRESHOLD_HOURS,
             location_threshold_km=LOCATION_THRESHOLD_KM,
