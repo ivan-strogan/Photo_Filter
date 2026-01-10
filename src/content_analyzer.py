@@ -105,14 +105,22 @@ class ContentAnalyzer:
         ]
 
     def _initialize_models(self) -> bool:
-        """Initialize computer vision models."""
+        """Initialize computer vision models.
+
+        This application requires local AI models. If models fail to initialize,
+        an error will be raised.
+        """
         if not TRANSFORMERS_AVAILABLE:
-            self.logger.warning("Transformers not available - content analysis disabled")
-            return False
+            error_msg = ("CRITICAL: Transformers library not available. "
+                        "Install required dependencies: pip install transformers torch")
+            self.logger.error(error_msg)
+            raise ImportError(error_msg)
 
         if not self.enable_local_models:
-            self.logger.info("Local models disabled - using basic analysis only")
-            return True
+            error_msg = ("CRITICAL: Local models are disabled but required for this application. "
+                        "ContentAnalyzer must be initialized with enable_local_models=True")
+            self.logger.error(error_msg)
+            raise ValueError(error_msg)
 
         try:
             # Initialize CLIP for object/scene classification
@@ -165,9 +173,8 @@ class ContentAnalyzer:
             if image.mode != 'RGB':
                 image = image.convert('RGB')
 
-            # Initialize models if needed
-            if not self._initialize_models():
-                return self._basic_content_analysis(image, photo_path)
+            # Initialize models if needed (raises error if unavailable)
+            self._initialize_models()
 
             # Perform comprehensive analysis
             analysis = self._comprehensive_analysis(image, photo_path)
@@ -215,7 +222,7 @@ class ContentAnalyzer:
 
         except Exception as e:
             self.logger.error(f"Error in comprehensive analysis: {e}")
-            return self._basic_content_analysis(image, photo_path)
+            raise RuntimeError(f"Content analysis failed for {photo_path.name}: {e}") from e
 
     def _generate_description(self, image: Image.Image) -> str:
         """Generate natural language description using BLIP."""
