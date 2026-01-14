@@ -46,9 +46,10 @@ Photo_Filter/
 
 ## Requirements
 
-- **Python 3.11** (recommended for full ML functionality)
+- **Python 3.11** (required for AI models)
+- **CLIP and BLIP models** (required for content analysis)
 - macOS, Linux, or Windows
-- For face recognition features: CMake and dlib (see installation notes below)
+- Optional: For face recognition features: CMake and dlib (see installation notes below)
 
 ## Installation
 
@@ -240,11 +241,13 @@ pytest tests/
 - `numpy` - Numerical operations
 - `python-dateutil` - Date parsing
 
-### Optional ML Dependencies
-- `torch` - PyTorch for neural networks
-- `transformers` - Hugging Face models (CLIP, BLIP)
+### Required ML Dependencies
+- `torch` - PyTorch for neural networks (REQUIRED)
+- `transformers` - Hugging Face models for CLIP/BLIP (REQUIRED)
 - `sentence-transformers` - Text embeddings
 - `chromadb` - Vector database
+
+Note: The application requires local AI models for content analysis. Install all dependencies from requirements.txt.
 
 ## Configuration
 
