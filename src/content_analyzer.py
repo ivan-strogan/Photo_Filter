@@ -2,14 +2,16 @@
 Content analysis for photos using computer vision models.
 
 This module analyzes photos to understand what's in them - objects, scenes,
-activities, and provides natural language descriptions. It can work with
-or without advanced ML models.
+activities, and provides natural language descriptions using CLIP and BLIP models.
+
+IMPORTANT: This module REQUIRES local AI models to function. The application will
+fail explicitly if transformers/torch dependencies are not available.
 
 For junior developers:
-- This demonstrates "graceful degradation" - works even when ML deps aren't available
 - Uses lazy loading pattern - models loaded only when needed
 - Implements caching to avoid re-analyzing the same photos
-- Shows how to handle optional dependencies with try/except imports
+- Requires CLIP (classification) and BLIP (captioning) models
+- Supports GPU acceleration when available
 """
 
 import logging
@@ -62,17 +64,15 @@ class ContentAnalysis:
 class ContentAnalyzer:
     """Analyzes photo content using computer vision models."""
 
-    def __init__(self, use_gpu: bool = True, enable_local_models: bool = True, face_recognizer=None):
+    def __init__(self, use_gpu: bool = True, face_recognizer=None):
         """Initialize content analyzer.
 
         Args:
             use_gpu: Whether to use GPU acceleration
-            enable_local_models: Whether to use local CLIP/BLIP models
             face_recognizer: Optional FaceRecognizer instance for people detection
         """
         self.logger = logging.getLogger(__name__)
         self.use_gpu = use_gpu
-        self.enable_local_models = enable_local_models
         self.face_recognizer = face_recognizer
 
         # Model components (lazy loaded)
@@ -115,12 +115,6 @@ class ContentAnalyzer:
                         "Install required dependencies: pip install transformers torch")
             self.logger.error(error_msg)
             raise ImportError(error_msg)
-
-        if not self.enable_local_models:
-            error_msg = ("CRITICAL: Local models are disabled but required for this application. "
-                        "ContentAnalyzer must be initialized with enable_local_models=True")
-            self.logger.error(error_msg)
-            raise ValueError(error_msg)
 
         try:
             # Initialize CLIP for object/scene classification
@@ -373,45 +367,6 @@ class ContentAnalyzer:
             confidence += 0.05
 
         return min(confidence, 1.0)
-
-    def _basic_content_analysis(self, image: Image.Image, photo_path: Path) -> ContentAnalysis:
-        """Fallback basic analysis when ML models unavailable."""
-        # Extract basic info from filename and path
-        filename = photo_path.name.lower()
-        parent_folder = photo_path.parent.name.lower()
-
-        # Basic scene inference from path
-        scenes = []
-        if any(keyword in parent_folder for keyword in ["outdoor", "nature", "park"]):
-            scenes.append("outdoor")
-        elif any(keyword in parent_folder for keyword in ["indoor", "home", "house"]):
-            scenes.append("indoor")
-
-        # Basic object inference
-        objects = []
-        if "birthday" in parent_folder or "party" in parent_folder:
-            objects.extend(["person", "cake"])
-
-        # Basic activity inference
-        activities = []
-        if "vacation" in parent_folder or "trip" in parent_folder:
-            activities.append("vacation")
-        elif "birthday" in parent_folder:
-            activities.append("celebration")
-
-        # Perform face recognition if available (even in basic mode)
-        people_detected, face_count = self._analyze_faces(photo_path)
-
-        return ContentAnalysis(
-            objects=objects,
-            scenes=scenes,
-            activities=activities,
-            description="Basic analysis from filename and folder",
-            confidence_score=0.3,
-            analysis_model="Basic+Face Recognition" if self.face_recognizer else "Basic",
-            people_detected=people_detected,
-            face_count=face_count
-        )
 
     def analyze_batch(self, photo_paths: List[Path],
                      max_photos: Optional[int] = None) -> Dict[str, ContentAnalysis]:
