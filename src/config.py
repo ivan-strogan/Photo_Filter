@@ -28,7 +28,7 @@ FILENAME_PATTERN = r"IMG_(\d{8})_(\d{6})(?:_\d+)?\.(JPG|MOV|PNG|jpg|mov|png)$"
 # Clustering parameters
 TIME_THRESHOLD_HOURS = 6  # Group photos within 6 hours
 LOCATION_THRESHOLD_KM = 1.0  # Group photos within 1km
-MIN_CLUSTER_SIZE = 3  # Minimum photos for an event
+MIN_CLUSTER_SIZE = 1  # Minimum photos for an event (allow single-photo events)
 
 # GPU settings
 USE_GPU = True  # Enable GPU if available
