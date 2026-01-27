@@ -6,6 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **IMPORTANT**: This project is now under proper version control with GitHub. All changes must be committed and versioned properly:
 
+- **Default Branch**: This project uses `master` as the default branch (NOT `main`)
 - **Always commit meaningful changes** with descriptive commit messages
 - **Follow conventional commit format**: `type: description` (e.g., `feat: add face recognition`, `fix: resolve event naming bug`, `docs: update README`)
 - **Test before committing**: Run `pytest tests/` to ensure all tests pass
