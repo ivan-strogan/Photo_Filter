@@ -220,17 +220,10 @@ def test_photo_analysis_with_face_recognition():
 
 @pytest.mark.integration
 @pytest.mark.slow
-@pytest.mark.skip(reason="KNOWN ISSUE: Face recognition not identifying trained faces - See Issue #25")
 def test_face_recognition_accuracy_identifies_known_person():
     """AI Accuracy Benchmark: Verify face recognition identifies a known person.
 
     **This is an AI accuracy test for face recognition, NOT a crash test.**
-
-    KNOWN ISSUE (Issue #25): This test currently fails because face recognition is not
-    identifying people who have been added to the database. Observed behavior:
-    - Training succeeds: Elena Rodriguez added to database ✓
-    - Face detection works: face_count=1 ✓
-    - Recognition fails: people_detected=[] ✗ (should contain "Elena Rodriguez")
 
     Woman_Photo_1.jpeg contains: a woman (we'll call her Elena Rodriguez for testing)
 
@@ -243,11 +236,8 @@ def test_face_recognition_accuracy_identifies_known_person():
     - Face is detected (face_count > 0)
     - Elena Rodriguez is identified in people_detected
 
-    Current result:
-    - Face is detected ✓
-    - Elena Rodriguez is NOT identified ✗
-
-    This test will be skipped until Issue #25 is resolved.
+    Note: This test previously failed due to Issue #25 (face cache invalidation bug).
+    The bug was fixed by clearing the face cache when adding people to the database.
     """
     test_photo = Path("tests/artifacts/photos/Woman_Photo_1.jpeg")
     if not test_photo.exists():
