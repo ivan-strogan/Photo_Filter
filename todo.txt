@@ -109,12 +109,11 @@ Photo Filter AI App - Development Todo List
 [x] Add comprehensive debug tracing through pipeline stages
 
 === HIGH PRIORITY BUG FIXES ===
-[ ] Issue #25: Face recognition not identifying trained faces in ContentAnalyzer
-    - Problem: Face detection works (face_count > 0) but people_detected is always empty
-    - Impact: Cannot identify known people in photos despite training; event naming missing people info
-    - Status: Training succeeds, face detection works, but recognition fails to match encodings
-    - Investigation: Check recognition thresholds, encoding quality, comparison logic in FaceRecognizer
-    - Test: tests/test_content_analyzer.py::test_face_recognition_accuracy_identifies_known_person (skipped)
+[x] Issue #25: Face recognition not identifying trained faces in ContentAnalyzer - FIXED
+    - Problem: Face cache was not invalidated when adding people to database
+    - Root Cause: add_person() cached faces with person_id=None before adding to DB
+    - Fix: Clear face cache for training images after adding person to database
+    - Test: tests/test_content_analyzer.py::test_face_recognition_accuracy_identifies_known_person ✅ PASSES
     - Related: Issue #20 (fixed) ensured face recognition integration doesn't crash
 
 [ ] Fix configuration inconsistency bug in src/config.py (MIN_CLUSTER_SIZE = 3 vs 1)
