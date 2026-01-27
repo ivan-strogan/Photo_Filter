@@ -372,6 +372,18 @@ class FaceRecognizer:
             )
 
             if success:
+                # Clear cache for the training images since faces now have person_id
+                # This ensures subsequent detections will re-identify with the updated database
+                for image_path in image_paths:
+                    cache_key = self._get_image_hash(image_path)
+                    if cache_key in self.face_cache:
+                        del self.face_cache[cache_key]
+                        self.logger.debug(f"Cleared cache for {image_path.name} after adding person")
+
+                # Save updated cache
+                if self.enable_caching:
+                    self._save_cache()
+
                 self.logger.info(f"Added person '{person_id}' with {len(encodings)} face encodings")
                 return True
             else:
