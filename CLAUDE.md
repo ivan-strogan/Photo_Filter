@@ -100,8 +100,8 @@ pip install -r requirements.txt
 ```bash
 # Main CLI commands (run with virtual environment activated)
 python main.py scan                    # Scan existing organized photos
-python main.py process --dry-run       # Process new photos (preview mode)
-python main.py pipeline               # Run complete processing pipeline
+python main.py process --dry-run       # Preview photo organization (doesn't move files)
+python main.py process --no-dry-run    # Actually organize photos (moves/copies files to folders)
 python main.py analyze-content --max-photos 10  # Analyze photo content
 python main.py status                 # Show system status
 python main.py config show            # Display current configuration
