@@ -226,62 +226,6 @@ def process(verbose, dry_run, max_photos, mode, save_report):
 
 @cli.command()
 @click.option('--verbose', '-v', is_flag=True, help='Enable verbose output')
-@click.option('--save-report', is_flag=True, help='Save detailed report to file')
-def pipeline(verbose, save_report):
-    """Run the complete photo organization pipeline."""
-    click.echo("🚀 Running complete photo organization pipeline...")
-
-    try:
-        processor = MediaProcessor(verbose=verbose)
-        results = processor.run_complete_pipeline()
-
-        # Display summary
-        pipeline_info = results['pipeline_info']
-        existing_lib = results['existing_library']
-        new_media = results['new_media']
-        recommendations = results['recommendations']
-
-        click.echo(f"\n⏱️  Pipeline completed in {pipeline_info['duration_seconds']:.1f} seconds")
-
-        # Existing library summary
-        lib_stats = existing_lib['file_stats']
-        click.echo(f"\n📚 Existing Library:")
-        click.echo(f"  {lib_stats['total_files']} organized files")
-        click.echo(f"  {existing_lib['organization_analysis']['total_event_folders']} event folders")
-
-        # New media summary
-        new_stats = new_media['file_stats']
-        new_clusters = new_media['clusters']
-        click.echo(f"\n📱 New Media:")
-        click.echo(f"  {new_stats['total_files']} unorganized files")
-        click.echo(f"  {len(new_clusters)} clusters suggested")
-
-        # Recommendations
-        quality = recommendations['quality_assessment']
-        click.echo(f"\n💡 Recommendations:")
-        click.echo(f"  High-quality clusters: {quality['high_quality_clusters']}")
-        click.echo(f"  Medium-quality clusters: {quality['medium_quality_clusters']}")
-        click.echo(f"  Average confidence: {quality['average_confidence']:.3f}")
-
-        suggested_actions = recommendations['suggested_actions']
-        if suggested_actions:
-            click.echo(f"\n📁 Top Folder Suggestions:")
-            for action in suggested_actions[:5]:
-                priority_icon = "🔴" if action['priority'] == 'high' else "🟡"
-                click.echo(f"  {priority_icon} {action['suggested_folder_name']} ({action['file_count']} files)")
-
-        if save_report:
-            # Report is automatically saved by the processor
-            click.echo(f"\n📄 Detailed report saved")
-
-        click.echo(f"\n✅ Pipeline completed successfully!")
-
-    except Exception as e:
-        click.echo(f"❌ Error during pipeline execution: {e}")
-        sys.exit(1)
-
-@cli.command()
-@click.option('--verbose', '-v', is_flag=True, help='Enable verbose output')
 @click.option('--max-photos', default=10, help='Maximum photos to analyze')
 def analyze_content(verbose, max_photos):
     """Analyze content of sample photos for testing."""
