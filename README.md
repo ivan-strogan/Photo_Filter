@@ -116,11 +116,11 @@ source venv_py311/bin/activate
 # Scan existing organized photos
 python main.py scan
 
-# Process new unorganized photos
+# Process new unorganized photos (preview mode - doesn't move files)
 python main.py process --dry-run
 
-# Run complete pipeline
-python main.py pipeline
+# Process and actually organize photos (moves/copies files to folders)
+python main.py process --no-dry-run
 
 # Analyze photo content
 python main.py analyze-content --max-photos 10
