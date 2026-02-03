@@ -59,6 +59,7 @@ Sample_Photos copy/
 # Temporary files
 *.tmp
 *.temp
+temp/
 
 # Env
 
