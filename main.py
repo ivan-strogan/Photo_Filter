@@ -232,10 +232,17 @@ def analyze_content(verbose, max_photos):
     click.echo(f"🔍 Analyzing photo content (max {max_photos} photos)...")
 
     try:
-        processor = MediaProcessor(verbose=verbose)
+        # Import components directly instead of using MediaProcessor
+        from src.media_detector import MediaDetector
+        from src.content_analyzer import ContentAnalyzer
+        from src.config import USE_GPU
+
+        # Initialize components directly
+        media_detector = MediaDetector()
+        content_analyzer = ContentAnalyzer(use_gpu=USE_GPU)
 
         # Get sample photos
-        all_files = processor.media_detector.scan_iphone_automatic()
+        all_files = media_detector.scan_iphone_automatic()
         photo_files = [f for f in all_files if f.file_type == 'photo']
 
         if not photo_files:
@@ -247,7 +254,7 @@ def analyze_content(verbose, max_photos):
 
         # Analyze content
         photo_paths = [f.path for f in sample_photos]
-        content_results = processor.content_analyzer.analyze_batch(photo_paths, max_photos=max_photos)
+        content_results = content_analyzer.analyze_batch(photo_paths, max_photos=max_photos)
 
         if content_results:
             # Display individual results
@@ -266,7 +273,7 @@ def analyze_content(verbose, max_photos):
                     click.echo(f"     Activities: {', '.join(analysis.activities)}")
 
             # Display summary
-            summary = processor.content_analyzer.get_content_summary(content_results)
+            summary = content_analyzer.get_content_summary(content_results)
             click.echo(f"\n📊 Content Analysis Summary:")
             click.echo(f"  Photos analyzed: {summary['total_photos_analyzed']}")
             click.echo(f"  Average confidence: {summary['average_confidence']:.3f}")
@@ -288,6 +295,9 @@ def analyze_content(verbose, max_photos):
 
         click.echo(f"\n✅ Content analysis completed!")
 
+        # Cleanup
+        content_analyzer.cleanup()
+
     except Exception as e:
         click.echo(f"❌ Error during content analysis: {e}")
         if verbose:
@@ -301,30 +311,33 @@ def status():
     click.echo("🔧 Photo Filter System Status")
 
     try:
-        processor = MediaProcessor()
-        status_info = processor.get_system_status()
+        # Import config constants directly instead of using MediaProcessor
+        from src.config import (
+            BASE_DIR, SAMPLE_PHOTOS_DIR, IPHONE_AUTOMATIC_DIR,
+            PICTURES_DIR, VECTOR_DB_DIR, TIME_THRESHOLD_HOURS,
+            LOCATION_THRESHOLD_KM, MIN_CLUSTER_SIZE, SUPPORTED_EXTENSIONS
+        )
 
         # Directory status
-        dirs = status_info['directories']
+        directories = {
+            'base_dir': str(BASE_DIR),
+            'sample_photos_dir': str(SAMPLE_PHOTOS_DIR),
+            'iphone_automatic_dir': str(IPHONE_AUTOMATIC_DIR),
+            'pictures_dir': str(PICTURES_DIR),
+            'vector_db_dir': str(VECTOR_DB_DIR)
+        }
+
         click.echo(f"\n📁 Directories:")
-        for name, path in dirs.items():
+        for name, path in directories.items():
             exists = "✅" if Path(path).exists() else "❌"
             click.echo(f"  {name}: {exists} {path}")
 
         # Configuration
-        config = status_info['configuration']
         click.echo(f"\n⚙️  Configuration:")
-        click.echo(f"  Time threshold: {config['time_threshold_hours']} hours")
-        click.echo(f"  Location threshold: {config['location_threshold_km']} km")
-        click.echo(f"  Min cluster size: {config['min_cluster_size']} files")
-        click.echo(f"  Supported extensions: {', '.join(config['supported_extensions'])}")
-
-        # Components
-        components = status_info['components_initialized']
-        click.echo(f"\n🔧 Components:")
-        for name, initialized in components.items():
-            status_icon = "✅" if initialized else "❌"
-            click.echo(f"  {name}: {status_icon}")
+        click.echo(f"  Time threshold: {TIME_THRESHOLD_HOURS} hours")
+        click.echo(f"  Location threshold: {LOCATION_THRESHOLD_KM} km")
+        click.echo(f"  Min cluster size: {MIN_CLUSTER_SIZE} files")
+        click.echo(f"  Supported extensions: {', '.join(SUPPORTED_EXTENSIONS)}")
 
     except Exception as e:
         click.echo(f"❌ Error getting status: {e}")
