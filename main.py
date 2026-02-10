@@ -17,7 +17,7 @@ Key Features:
 For junior developers:
 - This file uses the Click library for creating CLI commands
 - Each @cli.command() decorator creates a new command (scan, process, etc.)
-- The MediaProcessor class does the heavy lifting
+- The PhotoOrganizerPipeline handles the complete processing workflow
 - Error handling is implemented for each command
 """
 
@@ -28,7 +28,6 @@ import json   # For JSON data handling
 from pathlib import Path  # Modern way to handle file paths
 
 # Our application imports
-from src.media_processor import MediaProcessor      # Main processing engine
 from src.config_manager import get_config_manager   # Configuration management
 
 @click.group()
@@ -66,18 +65,68 @@ def scan(verbose):
     click.echo("🔍 Scanning existing Pictures library...")
 
     try:
-        # Initialize the main processing engine
-        # MediaProcessor handles all the complex logic
-        processor = MediaProcessor(verbose=verbose)
+        # Import components directly instead of using MediaProcessor
+        from src.media_detector import MediaDetector
+        from src.logging_utils import setup_logging
 
-        # Call the scanning method - this does the actual work
-        results = processor.scan_existing_library()
+        # Set up logging
+        log_level = "DEBUG" if verbose else "INFO"
+        setup_logging(log_level)
 
-        # Extract data from results dictionary
-        # The processor returns structured data that we display nicely
-        stats = results['file_stats']           # File counts, sizes, dates
-        analysis = results['organization_analysis']  # Folder patterns, naming
+        # Scan Pictures library
+        detector = MediaDetector()
+        organized_files = detector.scan_pictures_library()
 
+        if not organized_files:
+            click.echo("\n⚠️  No organized files found in Pictures library")
+            return
+
+        # Get statistics
+        stats = detector.get_media_stats(organized_files)
+
+        # Analyze organization patterns
+        event_folders = {}
+        for media_file in organized_files:
+            event_folder = getattr(media_file, 'event_folder', 'Unknown')
+            if event_folder not in event_folders:
+                event_folders[event_folder] = {
+                    'count': 0,
+                    'photos': 0,
+                    'videos': 0
+                }
+
+            event_info = event_folders[event_folder]
+            event_info['count'] += 1
+
+            if media_file.file_type == 'photo':
+                event_info['photos'] += 1
+            elif media_file.file_type == 'video':
+                event_info['videos'] += 1
+
+        # Analyze naming patterns
+        patterns = {
+            'date_prefixed': 0,
+            'location_mentioned': 0,
+            'to_filter_folders': 0
+        }
+
+        for folder_name in event_folders.keys():
+            folder_lower = folder_name.lower()
+
+            # Check for date prefix (YYYY_MM_DD pattern)
+            if any(char.isdigit() for char in folder_name[:10]):
+                patterns['date_prefixed'] += 1
+
+            # Check for location mentions
+            location_keywords = ['mexico', 'trip', 'vacation', 'birthday', 'wedding', 'calgary', 'edmonton']
+            if any(keyword in folder_lower for keyword in location_keywords):
+                patterns['location_mentioned'] += 1
+
+            # Check for "to filter" folders
+            if 'to filter' in folder_lower or 'to_filter' in folder_lower:
+                patterns['to_filter_folders'] += 1
+
+        # Display results
         click.echo(f"\n📊 Scan Results:")
         click.echo(f"  Total files: {stats['total_files']}")
         click.echo(f"  Photos: {stats['photos']}")
@@ -86,9 +135,7 @@ def scan(verbose):
         click.echo(f"  Date range: {stats['date_range'][0]} to {stats['date_range'][1]}")
 
         click.echo(f"\n📁 Organization Analysis:")
-        click.echo(f"  Event folders: {analysis['total_event_folders']}")
-
-        patterns = analysis['naming_patterns']
+        click.echo(f"  Event folders: {len(event_folders)}")
         click.echo(f"  Date-prefixed folders: {patterns['date_prefixed']}")
         click.echo(f"  Location-mentioned folders: {patterns['location_mentioned']}")
         click.echo(f"  Folders needing filtering: {patterns['to_filter_folders']}")
@@ -97,6 +144,9 @@ def scan(verbose):
 
     except Exception as e:
         click.echo(f"❌ Error during scanning: {e}")
+        if verbose:
+            import traceback
+            traceback.print_exc()
         sys.exit(1)
 
 @cli.command()

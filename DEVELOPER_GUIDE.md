@@ -75,7 +75,7 @@ The Photo Filter AI app uses a **modular architecture** with clear separation of
 ### 1. **Composition Pattern**
 Classes work together by containing instances of other classes:
 ```python
-class MediaProcessor:
+class PhotoOrganizerPipeline:
     def __init__(self):
         self.media_detector = MediaDetector()
         self.content_analyzer = ContentAnalyzer()
@@ -125,7 +125,7 @@ def select_clustering_algorithm(self, files):
 ### For Junior Developers
 
 1. **Start Small**: Begin by reading `main.py` to understand the CLI structure
-2. **Trace Execution**: Follow a single command from CLI → MediaProcessor → individual modules
+2. **Trace Execution**: Follow a single command from CLI → PhotoOrganizerPipeline → individual modules
 3. **Use Type Hints**: They help catch bugs and understand what functions expect
 4. **Read Docstrings**: Every function has documentation explaining its purpose
 5. **Test Incrementally**: Run individual commands to see how they work
