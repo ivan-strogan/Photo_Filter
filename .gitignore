@@ -52,9 +52,8 @@ content_analysis_cache.json
 photo_filter_config.json
 location_cache.json
 
-# Sample Photos (both original and backup copy)
-Sample_Photos/
-Sample_Photos copy/
+# Sample Photos (all variations)
+Sample_Photos*/
 
 # Temporary files
 *.tmp
