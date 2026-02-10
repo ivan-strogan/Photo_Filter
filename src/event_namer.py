@@ -362,6 +362,39 @@ class EventNamer:
         print(f"✅ VALIDATION DEBUG: Name passed validation: {event_name}")
         return True
 
+    def _contains_meta_text(self, event_name: str) -> bool:
+        """
+        Check if event name contains meta-text instead of actual event description.
+
+        Args:
+            event_name: Generated event name to check
+
+        Returns:
+            True if meta-text detected, False if clean
+        """
+        # Extract description part (after date)
+        parts = event_name.split(' - ', 1)
+        description = parts[1].lower() if len(parts) > 1 else event_name.lower()
+
+        # Meta-text phrases that indicate LLM is explaining instead of naming
+        meta_phrases = [
+            "here are",
+            "here is",
+            "options for",
+            "option for",
+            "folder name",
+            "short name",
+            "few options",
+            "could be",
+            "suggestions",
+            "suggest",
+            "create",
+            "name for",
+            "photos from"
+        ]
+
+        return any(phrase in description for phrase in meta_phrases)
+
     def _build_event_context(self, cluster_data: Dict[str, Any]) -> Dict[str, Any]:
         """
         Build comprehensive context for event naming.
@@ -576,13 +609,23 @@ class EventNamer:
             is_holiday = context['temporal']['is_holiday']
             location_city = context['location']['city'] or 'Unknown'
 
-            simple_prompt = f"Create a short folder name for photos from {date} {time_of_day}"
-            if is_holiday:
-                simple_prompt += " holiday"
+            # CRITICAL: Build directive prompt to prevent meta-text AND location hallucination
+            simple_prompt = f"""Output ONLY a folder name in this exact format: {date} - Event Name - {location_city}
 
-            # CRITICAL: Include location constraint to prevent hallucination
-            simple_prompt += f" in {location_city}. ONLY use {location_city} as the location. DO NOT use other cities like Paris, Vegas, etc."
-            simple_prompt += f" Format: {date} - Event Name - {location_city}. Example: {date} - Family BBQ - {location_city}"
+Photos from: {time_of_day}{"(holiday)" if is_holiday else ""}
+Location: {location_city} (ONLY use {location_city}, NOT Paris, Vegas, Hawaii, NYC, or other cities)
+
+Examples of CORRECT output:
+{date} - Family BBQ - {location_city}
+{date} - Weekend Gathering - {location_city}
+{date} - Morning Coffee - {location_city}
+
+WRONG - Do NOT output:
+"Here are options for..."
+"Create a folder name..."
+Multiple lines or explanations
+
+Output ONLY the folder name now:"""
 
             data = {
                 "model": self.ollama_model,
@@ -590,7 +633,7 @@ class EventNamer:
                 "stream": False,
                 "options": {
                     "temperature": 0.3,
-                    "num_predict": 10  # Very short response
+                    "num_predict": 20  # Increased to allow proper event names
                 }
             }
             response = requests.post(
@@ -606,6 +649,15 @@ class EventNamer:
                 if ollama_response:
                     # Clean and format the response
                     clean_name = ollama_response.replace('"', '').replace("'", "").strip()
+
+                    # Take only first line if multi-line
+                    clean_name = clean_name.split('\n')[0].strip()
+
+                    # Validate quality - reject if contains meta-text
+                    if self._contains_meta_text(clean_name):
+                        self.logger.warning(f"❌ LLM output contains meta-text, rejecting: {clean_name}")
+                        return None
+
                     # Add date prefix if not present
                     if not clean_name.startswith(date):
                         clean_name = f"{date} - {clean_name}"
