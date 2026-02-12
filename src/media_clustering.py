@@ -425,22 +425,25 @@ class MediaClusteringEngine:
                                     for face_idx, recognition_data in enumerate(result.recognition_results):
                                         self._log_clustering_diagnostics(f"Face {face_idx} in {media_file.filename}: {recognition_data}")
 
-                                # Check if Sasha was specifically attempted for recognition
+                                # Check if any people were attempted for recognition
                                 if face_count > 0:
-                                    sasha_attempted = False
-                                    if hasattr(result, 'face_distances') and 'Sasha' in result.face_distances:
-                                        sasha_distance = result.face_distances['Sasha']
-                                        self._log_clustering_diagnostics(f"Sasha recognition attempt in {media_file.filename}: distance={sasha_distance}")
-                                        sasha_attempted = True
+                                    recognition_attempted = False
+                                    if hasattr(result, 'face_distances') and result.face_distances:
+                                        # Log each person that was attempted for recognition
+                                        for person_name, distance in result.face_distances.items():
+                                            self._log_clustering_diagnostics(f"{person_name} recognition attempt in {media_file.filename}: distance={distance:.4f}")
+                                            recognition_attempted = True
 
-                                    if not sasha_attempted:
-                                        self._log_clustering_diagnostics(f"Sasha was NOT attempted for recognition in {media_file.filename} (faces found: {face_count})")
+                                    # If faces found but no recognition attempted, log that
+                                    if not recognition_attempted:
+                                        self._log_clustering_diagnostics(f"No people were attempted for recognition in {media_file.filename} (faces found: {face_count}, people in database: {len(self.people_database.get_all_people()) if self.people_database else 0})")
 
                                 # Log summary of recognition results
                                 if face_count > 0 and not people_detected:
                                     self._log_clustering_diagnostics(f"Faces detected but not recognized in {media_file.filename}: {face_count} faces found, no matches")
                                 elif face_count > 0 and people_detected:
-                                    self._log_clustering_diagnostics(f"Faces successfully recognized in {media_file.filename}: {len(people_detected)} people identified from {face_count} faces")
+                                    people_list = ', '.join(people_detected)
+                                    self._log_clustering_diagnostics(f"Faces successfully recognized in {media_file.filename}: {len(people_detected)} people identified from {face_count} faces - [{people_list}]")
                                 elif face_count == 0:
                                     self._log_clustering_diagnostics(f"No faces detected in {media_file.filename}")
 
