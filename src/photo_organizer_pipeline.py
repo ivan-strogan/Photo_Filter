@@ -22,6 +22,7 @@ from .folder_organizer import FolderOrganizer
 from .file_organizer import FileOrganizer
 from .media_validator import MediaValidator
 from .organized_photos_scanner import OrganizedPhotosScanner
+from .content_analyzer import ContentAnalyzer
 from .config_manager import get_config
 
 class PhotoOrganizerPipeline:
@@ -68,6 +69,11 @@ class PhotoOrganizerPipeline:
             verify_checksums=verify_checksums
         )
         self.organized_photos_scanner = OrganizedPhotosScanner()
+
+        # Content analyzer for activity detection
+        config = get_config()
+        self.enable_content_analysis = getattr(config.processing, 'enable_content_analysis', True)
+        self.content_analyzer = ContentAnalyzer(use_gpu=config.processing.use_gpu) if self.enable_content_analysis else None
 
         # Clustering engine will be initialized after vector database setup
         self.clustering_engine = None
@@ -156,6 +162,14 @@ class PhotoOrganizerPipeline:
                 print(f"❌ PIPELINE DEBUG: No clusters found, skipping naming stage")
                 self.logger.warning("No clusters created from media files")
                 return self._generate_pipeline_report(pipeline_start_time)
+
+            # Stage 3.5: Analyze content for activity detection
+            self.logger.info("Stage 3.5: Analyzing photo content for activity detection...")
+            if progress_callback:
+                progress_callback("Analyzing photo content and detecting activities...", 0.4)
+
+            content_results = self._stage_analyze_content(clustering_results['clusters'])
+            self.pipeline_results['stage_results']['content_analysis'] = content_results
 
             # Stage 4: Generate intelligent event names
             self.logger.info("Stage 4: Generating intelligent event names...")
@@ -373,6 +387,81 @@ class PhotoOrganizerPipeline:
                 'timestamp': datetime.now().isoformat()
             })
             return {'clusters': [], 'error': str(e)}
+
+    def _stage_analyze_content(self, clusters: List[Any]) -> Dict[str, Any]:
+        """Stage 3.5: Analyze photo content for activity detection."""
+        try:
+            if not self.enable_content_analysis or not self.content_analyzer:
+                self.logger.info("Content analysis disabled, skipping")
+                return {
+                    'content_analysis_enabled': False,
+                    'clusters_analyzed': 0,
+                    'total_photos_analyzed': 0
+                }
+
+            total_photos_analyzed = 0
+            clusters_with_analysis = 0
+
+            for cluster in clusters:
+                # Get all photo paths from the cluster
+                photo_files = [f for f in cluster.media_files if f.file_type == 'photo']
+
+                if not photo_files:
+                    self.logger.debug(f"Cluster {cluster.cluster_id} has no photos, skipping content analysis")
+                    continue
+
+                photo_paths = [f.path for f in photo_files]
+
+                # Limit analysis to reasonable number of photos per cluster
+                max_photos_per_cluster = 20
+                if len(photo_paths) > max_photos_per_cluster:
+                    self.logger.info(f"Cluster {cluster.cluster_id} has {len(photo_paths)} photos, analyzing first {max_photos_per_cluster}")
+                    photo_paths = photo_paths[:max_photos_per_cluster]
+
+                # Analyze the photos
+                self.logger.info(f"Analyzing {len(photo_paths)} photos in cluster {cluster.cluster_id}")
+                analysis_results = self.content_analyzer.analyze_batch(photo_paths, max_photos=len(photo_paths))
+
+                if analysis_results:
+                    # Get aggregated content summary
+                    content_summary = self.content_analyzer.get_content_summary(analysis_results)
+
+                    # Attach content analysis to cluster metadata
+                    cluster.metadata['content_analysis'] = content_summary
+
+                    # Also update content_tags for backward compatibility
+                    if content_summary.get('top_objects'):
+                        cluster.content_tags = [obj[0] for obj in content_summary['top_objects'][:5]]
+
+                    clusters_with_analysis += 1
+                    total_photos_analyzed += len(analysis_results)
+
+                    self.logger.info(f"Cluster {cluster.cluster_id} analysis complete: "
+                                   f"{content_summary.get('total_photos_analyzed', 0)} photos, "
+                                   f"{len(content_summary.get('top_activities', []))} activities detected")
+
+            return {
+                'content_analysis_enabled': True,
+                'clusters_analyzed': clusters_with_analysis,
+                'total_clusters': len(clusters),
+                'total_photos_analyzed': total_photos_analyzed,
+                'analysis_success_rate': clusters_with_analysis / max(1, len(clusters))
+            }
+
+        except Exception as e:
+            self.logger.error(f"Content analysis failed: {e}")
+            import traceback
+            traceback.print_exc()
+            self.pipeline_results['errors'].append({
+                'stage': 'content_analysis',
+                'error': str(e),
+                'timestamp': datetime.now().isoformat()
+            })
+            return {
+                'content_analysis_enabled': True,
+                'error': str(e),
+                'clusters_analyzed': 0
+            }
 
     def _stage_generate_event_names(self, clusters: List[Any]) -> Dict[str, Any]:
         """Stage 3: Generate intelligent event names."""
