@@ -14,8 +14,17 @@ Uses proper pytest fixtures and follows the project test structure.
 
 import pytest
 import json
+import random
 from pathlib import Path
 from datetime import datetime, timedelta
+from PIL import Image
+
+# Optional EXIF manipulation library
+try:
+    import piexif
+    PIEXIF_AVAILABLE = True
+except ImportError:
+    PIEXIF_AVAILABLE = False
 
 # Import core classes
 try:
@@ -374,6 +383,104 @@ def test_media_clustering_engine_receives_real_face_components(test_people_datab
     assert elena_person is not None, "People database should contain Elena Rodriguez"
 
     print("✅ MediaClusteringEngine properly receives real face recognition components")
+
+
+@pytest.mark.integration
+@pytest.mark.regression
+@pytest.mark.skipif(not PIEXIF_AVAILABLE, reason="piexif library not installed")
+def test_face_recognition_with_exif_orientation(temp_test_dir, real_test_photos):
+    """Test that face recognition handles EXIF orientation correctly (Issue #53).
+
+    Simulates iPhone behavior: pixels stored rotated + EXIF tag for correction.
+    Our _load_image_with_orientation() should correct before face detection.
+    """
+    print("🧪 Testing EXIF orientation handling (Issue #53)")
+
+    source_photo = real_test_photos['with_faces'][0]
+    test_photo_path = temp_test_dir / "test_exif_rotated.jpg"
+
+    face_recognizer = FaceRecognizer(
+        detection_model="hog",
+        recognition_tolerance=0.6,
+        enable_caching=False
+    )
+
+    # Verify original works
+    original_result = face_recognizer.detect_faces(source_photo)
+    print(f"🧪 Original: {original_result.faces_detected} faces")
+    assert original_result.faces_detected > 0, "Should detect face in original"
+
+    try:
+        # Simulate iPhone EXIF 6: pixels stored 90° CCW, EXIF says rotate 90° CW to correct
+        # PIL rotate() is counter-clockwise, so rotate(90) = 90° CCW
+        img = Image.open(source_photo)
+        rotated_img = img.rotate(90, expand=True)
+
+        exif_dict = {"0th": {}, "Exif": {}, "GPS": {}, "1st": {}, "thumbnail": None}
+        exif_dict["0th"][piexif.ImageIFD.Orientation] = 6
+        exif_bytes = piexif.dump(exif_dict)
+        rotated_img.save(test_photo_path, "JPEG", exif=exif_bytes)
+
+        # Our code should read EXIF, correct rotation, then detect face
+        result = face_recognizer.detect_faces(test_photo_path)
+        print(f"🧪 With EXIF orientation 6: {result.faces_detected} faces")
+
+        assert result.faces_detected > 0, \
+            "REGRESSION #53: Face not detected with EXIF orientation correction"
+
+        print("✅ EXIF orientation test PASSED")
+
+    finally:
+        if test_photo_path.exists():
+            test_photo_path.unlink()
+
+
+@pytest.mark.integration
+@pytest.mark.regression
+def test_face_recognition_with_random_pixel_rotation(temp_test_dir, real_test_photos):
+    """Test face recognition on a randomly rotated image.
+
+    Rotates image pixels by a random angle (30-270°) to simulate a tilted face.
+    HOG face detection works best on upright faces, so this tests robustness.
+    """
+    print("🧪 Testing face recognition with random pixel rotation")
+
+    source_photo = real_test_photos['with_faces'][0]
+    random_angle = random.randint(30, 270)
+    test_photo_path = temp_test_dir / f"test_rotated_{random_angle}.jpg"
+
+    face_recognizer = FaceRecognizer(
+        detection_model="hog",
+        recognition_tolerance=0.6,
+        enable_caching=False
+    )
+
+    # Verify original works
+    original_result = face_recognizer.detect_faces(source_photo)
+    print(f"🧪 Original: {original_result.faces_detected} faces")
+    assert original_result.faces_detected > 0, "Should detect face in original"
+
+    try:
+        # Rotate image by random angle
+        img = Image.open(source_photo)
+        rotated_img = img.rotate(random_angle, expand=True, fillcolor=(255, 255, 255))
+        rotated_img.save(test_photo_path, "JPEG")
+
+        # Test face detection on rotated image
+        result = face_recognizer.detect_faces(test_photo_path)
+        print(f"🧪 Rotated {random_angle}°: {result.faces_detected} faces")
+
+        # HOG may not detect rotated faces - that's OK, test shouldn't crash
+        if result.faces_detected > 0:
+            print(f"✅ Face detected at {random_angle}° rotation!")
+        else:
+            print(f"⚠️  No face at {random_angle}° (expected for HOG detector)")
+
+        print("✅ Pixel rotation test completed (no crash)")
+
+    finally:
+        if test_photo_path.exists():
+            test_photo_path.unlink()
 
 
 if __name__ == "__main__":

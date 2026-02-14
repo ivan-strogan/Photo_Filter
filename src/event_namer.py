@@ -258,13 +258,12 @@ class EventNamer:
         - Notice how we try multiple approaches in order of sophistication
         - Each approach has fallbacks for when data isn't available
         """
-        print(f"🎯 EVENT NAMING: Starting event name generation for cluster with {len(cluster_data.get('files', []))} files")
+        # Get files from either key (cluster_data uses 'media_files')
+        files = cluster_data.get('files', []) or cluster_data.get('media_files', [])
+        print(f"🎯 EVENT NAMING: Starting event name generation for cluster with {len(files)} files")
 
         # Create detailed diagnostic log
         self._log_diagnostics("=== EVENT NAMING DIAGNOSTICS START ===")
-
-        # Log file information clearly
-        files = cluster_data.get('files', []) or cluster_data.get('media_files', [])
         self._log_diagnostics(f"Cluster size: {len(files)} files")
 
         if files:

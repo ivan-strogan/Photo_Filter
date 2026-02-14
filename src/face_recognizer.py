@@ -17,7 +17,7 @@ from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass, asdict
 import json
 import numpy as np
-from PIL import Image
+from PIL import Image, ExifTags
 import hashlib
 import warnings
 
@@ -183,6 +183,66 @@ class FaceRecognizer:
         except Exception:
             return str(image_path)
 
+    def _load_image_with_orientation(self, image_path: Path) -> np.ndarray:
+        """Load image and correct EXIF orientation for proper face detection.
+
+        iPhone photos often have EXIF orientation tags that indicate the image
+        should be rotated. face_recognition.load_image_file() doesn't handle this,
+        causing face detection to fail on rotated images.
+
+        Args:
+            image_path: Path to image file
+
+        Returns:
+            numpy array with corrected orientation in RGB format
+        """
+        # Load with PIL to access EXIF data
+        img_pil = Image.open(image_path)
+
+        # Correct orientation based on EXIF tag
+        try:
+            # Find the orientation tag key
+            orientation_key = None
+            for key in ExifTags.TAGS.keys():
+                if ExifTags.TAGS[key] == 'Orientation':
+                    orientation_key = key
+                    break
+
+            if orientation_key:
+                exif = img_pil._getexif()
+                if exif and orientation_key in exif:
+                    orientation = exif[orientation_key]
+
+                    # Apply rotation based on EXIF orientation value
+                    # See: https://magnushoff.com/articles/jpeg-orientation/
+                    if orientation == 2:
+                        img_pil = img_pil.transpose(Image.FLIP_LEFT_RIGHT)
+                    elif orientation == 3:
+                        img_pil = img_pil.rotate(180, expand=True)
+                    elif orientation == 4:
+                        img_pil = img_pil.transpose(Image.FLIP_TOP_BOTTOM)
+                    elif orientation == 5:
+                        img_pil = img_pil.rotate(270, expand=True).transpose(Image.FLIP_LEFT_RIGHT)
+                    elif orientation == 6:
+                        img_pil = img_pil.rotate(270, expand=True)
+                    elif orientation == 7:
+                        img_pil = img_pil.rotate(90, expand=True).transpose(Image.FLIP_LEFT_RIGHT)
+                    elif orientation == 8:
+                        img_pil = img_pil.rotate(90, expand=True)
+
+                    if orientation != 1:
+                        self.logger.debug(f"Corrected EXIF orientation {orientation} for {image_path.name}")
+        except Exception as e:
+            # If EXIF handling fails, continue with original image
+            self.logger.debug(f"Could not read EXIF orientation for {image_path.name}: {e}")
+
+        # Convert to RGB if necessary (face_recognition requires RGB)
+        if img_pil.mode != 'RGB':
+            img_pil = img_pil.convert('RGB')
+
+        # Convert to numpy array
+        return np.array(img_pil)
+
     def detect_faces(self, image_path: Path) -> FaceRecognitionResult:
         """Detect faces in a single image.
 
@@ -221,8 +281,9 @@ class FaceRecognizer:
         try:
             self.logger.info(f"🔍 Detecting faces in: {image_path.name}")
 
-            # Load image
-            image = face_recognition.load_image_file(str(image_path))
+            # Load image with EXIF orientation correction
+            # iPhone photos often have rotation metadata that face_recognition doesn't handle
+            image = self._load_image_with_orientation(image_path)
 
             # Detect face locations
             face_locations = face_recognition.face_locations(

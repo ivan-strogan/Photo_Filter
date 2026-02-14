@@ -16,6 +16,7 @@ transformers>=4.20.0,<4.48.0
 numpy>=1.21.0,<2.0.0
 pytest>=7.0.0
 python-dotenv>=1.0.0
+piexif>=1.1.0
 
 # Optional packages (require additional setup)
 # Install first: brew install cmake && brew install dlib
