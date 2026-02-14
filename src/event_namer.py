@@ -92,6 +92,9 @@ class EventNamer:
         self.logger = logging.getLogger(__name__)
         self.enable_llm = enable_llm
 
+        # Setup dedicated LLM interaction logger
+        self.llm_logger = self._setup_llm_logger()
+
         # LLM preferences: OpenAI -> Ollama -> Templates
         # Only use OpenAI if we have an API key
         self.use_openai = enable_llm and OPENAI_AVAILABLE and api_key is not None
@@ -124,6 +127,41 @@ class EventNamer:
         self.holiday_patterns = self._load_holiday_patterns()
         self.activity_templates = self._load_activity_templates()
         self.location_nicknames = self._load_location_nicknames()
+
+    def _setup_llm_logger(self) -> logging.Logger:
+        """
+        Setup dedicated logger for LLM prompt/response interactions.
+
+        Returns:
+            Configured logger for LLM interactions
+        """
+        llm_logger = logging.getLogger('llm_interactions')
+        llm_logger.setLevel(logging.INFO)
+
+        # Create logs directory if it doesn't exist
+        log_dir = Path('logs')
+        log_dir.mkdir(exist_ok=True)
+
+        # Create file handler for LLM interactions
+        log_file = log_dir / 'llm_prompts_responses.log'
+        handler = logging.FileHandler(log_file, mode='a', encoding='utf-8')
+        handler.setLevel(logging.INFO)
+
+        # Create detailed formatter
+        formatter = logging.Formatter(
+            '\n{"timestamp": "%(asctime)s", "level": "%(levelname)s"}\n%(message)s\n' + '='*80,
+            datefmt='%Y-%m-%d %H:%M:%S'
+        )
+        handler.setFormatter(formatter)
+
+        # Remove existing handlers to avoid duplicates
+        llm_logger.handlers = []
+        llm_logger.addHandler(handler)
+
+        # Don't propagate to root logger
+        llm_logger.propagate = False
+
+        return llm_logger
 
     def _initialize_llm_client(self) -> Tuple[bool, str]:
         """
@@ -224,8 +262,27 @@ class EventNamer:
 
         # Create detailed diagnostic log
         self._log_diagnostics("=== EVENT NAMING DIAGNOSTICS START ===")
+
+        # Log file information clearly
+        files = cluster_data.get('files', []) or cluster_data.get('media_files', [])
+        self._log_diagnostics(f"Cluster size: {len(files)} files")
+
+        if files:
+            # Log first few filenames for identification
+            sample_size = min(5, len(files))
+            self._log_diagnostics(f"Files in cluster (showing {sample_size}/{len(files)}):")
+            for i, media_file in enumerate(files[:sample_size]):
+                if hasattr(media_file, 'filename'):
+                    filename = media_file.filename
+                elif hasattr(media_file, 'path'):
+                    filename = media_file.path.name if hasattr(media_file.path, 'name') else str(media_file.path)
+                else:
+                    filename = str(media_file)
+                self._log_diagnostics(f"  [{i+1}] {filename}")
+            if len(files) > sample_size:
+                self._log_diagnostics(f"  ... and {len(files) - sample_size} more files")
+
         self._log_diagnostics(f"Cluster data keys: {list(cluster_data.keys())}")
-        self._log_diagnostics(f"Files count: {len(cluster_data.get('files', []))}")
         self._log_diagnostics(f"LLM enabled: {self.enable_llm}")
         self._log_diagnostics(f"Vector similarity enabled: {self.enable_vector_similarity}")
 
@@ -234,6 +291,13 @@ class EventNamer:
             print(f"🔍 EVENT NAMING: Building context from cluster data...")
             context = self._build_event_context(cluster_data)
             print(f"🔍 EVENT NAMING: Context built - location: {context.get('location', {}).get('city', 'Unknown')}")
+
+            # Debug content analysis
+            content = context.get('content', {})
+            print(f"🔍 CONTENT DEBUG: Activities: {content.get('activities', [])[:3]}")
+            print(f"🔍 CONTENT DEBUG: Scenes: {content.get('scenes', [])[:3]}")
+            print(f"🔍 CONTENT DEBUG: Objects: {content.get('objects', [])[:3]}")
+            print(f"🔍 CONTENT DEBUG: Primary activity: {content.get('primary_activity', 'unknown')}")
 
             # Log detailed context information
             self._log_diagnostics("--- EXTRACTED CONTEXT ---")
@@ -281,6 +345,13 @@ class EventNamer:
             #     print(f"⚙️ EVENT NAMING: Simple result: {event_name}")
 
             print(f"✅ EVENT NAMING: Generated name before validation: {event_name}")
+
+            # Check if we have a name to validate
+            if not event_name:
+                print(f"❌ EVENT NAMING: No name generated (LLM timeout/failure), skipping validation")
+                self._log_diagnostics("NO EVENT NAME GENERATED - LLM timeout or failure")
+                self._log_diagnostics("=== EVENT NAMING DIAGNOSTICS END ===")
+                return None
 
             # Validate the name before caching
             is_valid = self._validate_event_name(event_name, context)
@@ -332,25 +403,30 @@ class EventNamer:
         location = context['location']
         temporal = context['temporal']
 
-        # Extract the descriptive part (after date)
-        parts = event_name.split(' - ', 1)
-        description = parts[1] if len(parts) > 1 else event_name
+        # Extract the descriptive part (after date) and location suffix
+        parts = event_name.split(' - ')
+        description = parts[1] if len(parts) > 1 else ''
+        name_location = parts[2] if len(parts) > 2 else ''
 
-        # Reject names with wrong geography
-        wrong_locations = ['Paris', 'Vegas', 'Hawaii', 'NYC']  # Removed 'Beach' as it's too common
-        actual_location = location['city'] or ''
+        actual_location = location.get('city', '')
 
         print(f"🔍 VALIDATION DEBUG: Description: '{description}'")
+        print(f"🔍 VALIDATION DEBUG: Location in name: '{name_location}'")
         print(f"🔍 VALIDATION DEBUG: Actual location: '{actual_location}'")
 
-        for wrong_loc in wrong_locations:
-            in_description = wrong_loc in description
-            in_location = wrong_loc in actual_location
-            print(f"🔍 VALIDATION DEBUG: Checking '{wrong_loc}' - in_description:{in_description}, in_location:{in_location}")
-
-            if in_description and not in_location:
-                print(f"❌ VALIDATION DEBUG: Rejecting geographically inappropriate name: {event_name}")
-                self.logger.warning(f"Rejecting geographically inappropriate name: {event_name}")
+        # Validate location consistency: if we provided a city, LLM should use it
+        # If actual_location exists, the name should contain it (not "Unknown" or different city)
+        if actual_location:
+            # Check if the actual location appears in the name
+            if name_location and actual_location.lower() in name_location.lower():
+                print(f"✅ VALIDATION DEBUG: Location matches - '{actual_location}' found in '{name_location}'")
+            elif name_location.lower() == 'unknown':
+                print(f"❌ VALIDATION DEBUG: LLM returned 'Unknown' when we provided '{actual_location}'")
+                self.logger.warning(f"Rejecting name with 'Unknown' when location was provided: {event_name}")
+                return False
+            elif name_location and actual_location.lower() not in name_location.lower():
+                print(f"❌ VALIDATION DEBUG: Location mismatch - expected '{actual_location}', got '{name_location}'")
+                self.logger.warning(f"Rejecting name with wrong location: {event_name}")
                 return False
 
         # Reject seasonal mismatches (only for obvious cases)
@@ -536,10 +612,11 @@ class EventNamer:
             # Try Ollama directly (skip initialization test to avoid timeout issues)
             provider = "none"
             if self.use_ollama:
-                print(f"🤖 LLM DEBUG: Attempting Ollama query...")
-                raw_name = self._query_ollama_simple(context)
+                print(f"🤖 LLM DEBUG: Attempting Ollama query with full detailed prompt...")
+                raw_name = self._query_ollama(prompt)
                 print(f"🤖 LLM DEBUG: Ollama result: {raw_name}")
                 provider = "ollama"
+            # TODO: Remove OpenAI support - no longer needed, Ollama provides local LLM
             elif self.use_openai:
                 print(f"🤖 LLM DEBUG: Attempting OpenAI query...")
                 success, init_provider = self._initialize_llm_client()
@@ -576,6 +653,7 @@ class EventNamer:
             self.logger.warning(f"LLM naming failed: {e}")
             return None
 
+    # TODO: Remove this method - OpenAI support no longer needed
     def _query_openai(self, prompt: str) -> Optional[str]:
         """Query OpenAI for event name generation."""
         try:
@@ -600,50 +678,32 @@ class EventNamer:
             self.logger.warning(f"OpenAI query failed: {e}")
             return None
 
-    def _query_ollama_simple(self, context: Dict[str, Any]) -> Optional[str]:
-        """Query Ollama with a simple prompt to reduce processing time."""
+    def _query_ollama(self, prompt: str) -> Optional[str]:
+        """Query Ollama with the full detailed prompt."""
         try:
-            # Use a much simpler prompt to reduce processing time
-            date = context['temporal']['date']
-            time_of_day = context['temporal']['time_of_day']
-            is_holiday = context['temporal']['is_holiday']
-            location_city = context['location']['city'] or 'Unknown'
-
-            # CRITICAL: Build directive prompt to prevent meta-text AND location hallucination
-            simple_prompt = f"""Output ONLY a folder name in this exact format: {date} - Event Name - {location_city}
-
-Photos from: {time_of_day}{"(holiday)" if is_holiday else ""}
-Location: {location_city} (ONLY use {location_city}, NOT Paris, Vegas, Hawaii, NYC, or other cities)
-
-Examples of CORRECT output:
-{date} - Family BBQ - {location_city}
-{date} - Weekend Gathering - {location_city}
-{date} - Morning Coffee - {location_city}
-
-WRONG - Do NOT output:
-"Here are options for..."
-"Create a folder name..."
-Multiple lines or explanations
-
-Output ONLY the folder name now:"""
+            # Log the prompt being sent
+            self.llm_logger.info(f"PROMPT TO OLLAMA (model: {self.ollama_model}):\n{prompt}")
 
             data = {
                 "model": self.ollama_model,
-                "prompt": simple_prompt,
+                "prompt": prompt,  # Use the provided prompt from _build_naming_prompt()
                 "stream": False,
                 "options": {
                     "temperature": 0.3,
-                    "num_predict": 20  # Increased to allow proper event names
+                    "num_predict": 30  # Allow room for descriptive event names
                 }
             }
             response = requests.post(
                 f"{self.ollama_url}/api/generate",
                 json=data,
-                timeout=60  # Local models can be slower, especially on first run
+                timeout=300  # 5 minutes - quality over speed, give LLM time to process detailed prompt
             )
             if response.status_code == 200:
                 result = response.json()
                 ollama_response = result.get("response", "").strip()
+
+                # Log the raw response from Ollama
+                self.llm_logger.info(f"RESPONSE FROM OLLAMA:\n{ollama_response}")
 
                 # Format the response as a proper folder name
                 if ollama_response:
@@ -656,19 +716,22 @@ Output ONLY the folder name now:"""
                     # Validate quality - reject if contains meta-text
                     if self._contains_meta_text(clean_name):
                         self.logger.warning(f"❌ LLM output contains meta-text, rejecting: {clean_name}")
+                        self.llm_logger.warning(f"REJECTED (meta-text detected): {clean_name}")
                         return None
 
-                    # Add date prefix if not present
-                    if not clean_name.startswith(date):
-                        clean_name = f"{date} - {clean_name}"
+                    self.llm_logger.info(f"ACCEPTED (after cleaning): {clean_name}")
                     return clean_name
+
+                self.llm_logger.warning("RESPONSE WAS EMPTY")
                 return None
             else:
                 self.logger.warning(f"Ollama returned status {response.status_code}")
+                self.llm_logger.error(f"OLLAMA ERROR: Status {response.status_code}")
                 return None
 
         except Exception as e:
             self.logger.warning(f"Ollama query failed: {e}")
+            self.llm_logger.error(f"OLLAMA EXCEPTION: {str(e)}")
             return None
 
     def _build_naming_prompt(self, context: Dict[str, Any]) -> str:
@@ -711,9 +774,9 @@ Output ONLY the folder name now:"""
 - GPS available: {'Yes' if location['has_gps'] else 'No'}
 
 **Content Analysis:**
-- Activities: {', '.join(content['activities'][:3]) if content['activities'] else 'None detected'}
-- Scenes: {', '.join(content['scenes'][:3]) if content['scenes'] else 'None detected'}
-- Objects: {', '.join(content['objects'][:3]) if content['objects'] else 'None detected'}
+- Activities: {', '.join([item[0] if isinstance(item, tuple) else str(item) for item in content['activities'][:3]]) if content['activities'] else 'None detected'}
+- Scenes: {', '.join([item[0] if isinstance(item, tuple) else str(item) for item in content['scenes'][:3]]) if content['scenes'] else 'None detected'}
+- Objects: {', '.join([item[0] if isinstance(item, tuple) else str(item) for item in content['objects'][:3]]) if content['objects'] else 'None detected'}
 - Event type: {content['event_type']}
 
 **People Detected:**
@@ -736,8 +799,8 @@ Output ONLY the folder name now:"""
 
 **IMPORTANT CONSTRAINTS:**
 - ONLY use the provided location: {location['city'] or 'Unknown'}
-- DO NOT invent or hallucinate other locations (no Paris, Vegas, Hawaii, etc.)
-- Be specific and descriptive, avoid generic terms like "Walk", "Outing"
+- DO NOT invent or change the location - use EXACTLY what is provided
+- Be specific and descriptive, avoid generic terms like "Photoshoot", "Event Name", "Outing"
 - Consider the season and weather for the location
 - If no specific activity detected, use time/duration/setting context
 
@@ -753,7 +816,15 @@ Output ONLY the folder name now:"""
 - 2024_08_10 - Beach Day - Vancouver
 - 2024_09_05 - Mountain Hiking - Calgary
 
-Generate ONLY the folder name using the EXACT location provided above:"""
+**CRITICAL OUTPUT INSTRUCTION:**
+Generate ONLY the folder name using the EXACT location provided above.
+Do NOT output:
+- Explanations or commentary
+- Multiple options or lines
+- Meta-text like "Here are some options..." or "I suggest..."
+- Just the single folder name, nothing else
+
+Output only the folder name now:"""
 
         return prompt
 
@@ -1145,7 +1216,14 @@ Generate ONLY the folder name using the EXACT location provided above:"""
     def _identify_primary_activity(self, content_analysis: Dict[str, Any]) -> str:
         """Identify the primary activity from content analysis."""
         activities = content_analysis.get('top_activities', [])
-        return activities[0] if activities else 'unknown'
+        if activities:
+            # top_activities is a list of tuples: [('activity_name', count), ...]
+            # Extract just the activity name from the first tuple
+            first_activity = activities[0]
+            if isinstance(first_activity, tuple):
+                return first_activity[0]  # Get activity name from tuple
+            return str(first_activity)  # Fallback to string conversion
+        return 'unknown'
 
     def _identify_activity_from_tags(self, content_tags: List[str]) -> str:
         """Identify primary activity from content tags."""
@@ -1214,7 +1292,9 @@ Generate ONLY the folder name using the EXACT location provided above:"""
 
         # Calculate time gaps between photos
         print(f"🐛 DEBUG: Calculating time gaps for {len(files)} files")
-        print(f"🐛 DEBUG: First file type: {type(files[0])}")
+        if files:
+            file_type = files[0].file_type if hasattr(files[0], 'file_type') else 'unknown'
+            print(f"🐛 DEBUG: First file type: {file_type}")
 
         # Handle both MediaFile objects and dictionary formats
         times = []

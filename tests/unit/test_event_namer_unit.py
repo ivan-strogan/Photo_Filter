@@ -113,19 +113,17 @@ def test_query_ollama_simple_includes_location_constraint(mock_event_namer, mock
         }
         mock_post.return_value = mock_response
 
-        # Call the method
-        result = mock_event_namer._query_ollama_simple(mock_context_edmonton)
+        # Build prompt from context and call Ollama (new method names)
+        prompt = mock_event_namer._build_naming_prompt(mock_context_edmonton)
+        result = mock_event_namer._query_ollama(prompt)
 
-        # Verify the method was called with location constraints
+        # Verify the method was called
         assert mock_post.called, "requests.post should be called"
-        call_args = mock_post.call_args
-        posted_data = call_args[1]['json']  # Second argument, 'json' key
-        prompt = posted_data['prompt']
 
-        # Verify location constraints are in the prompt
+        # Verify location constraints are in the built prompt (updated for new prompt format)
         assert 'Edmonton' in prompt, "Prompt should include actual location (Edmonton)"
-        assert 'ONLY use Edmonton' in prompt, "Prompt should have location constraint"
-        assert 'NOT Paris, Vegas' in prompt or 'NOT Paris' in prompt, "Prompt should warn against hallucination"
+        assert 'ONLY use the provided location' in prompt, "Prompt should have location constraint"
+        assert 'DO NOT invent or change the location' in prompt, "Prompt should warn against hallucination"
 
         # Verify result includes correct location
         assert result is not None, "Should return a result"
@@ -135,7 +133,7 @@ def test_query_ollama_simple_includes_location_constraint(mock_event_namer, mock
 
 
 @pytest.mark.unit
-def test_query_ollama_simple_prevents_location_hallucination(mock_event_namer, mock_context_edmonton):
+def test_query_ollama_prevents_location_hallucination(mock_event_namer, mock_context_edmonton):
     """Test that the prompt explicitly prevents location hallucination."""
     print("🧪 Testing Ollama prompt prevents location hallucination")
 
@@ -145,18 +143,14 @@ def test_query_ollama_simple_prevents_location_hallucination(mock_event_namer, m
         mock_response.json.return_value = {'response': 'Test Event - Edmonton'}
         mock_post.return_value = mock_response
 
-        # Call the method
-        mock_event_namer._query_ollama_simple(mock_context_edmonton)
+        # Build prompt and call Ollama (new method names)
+        prompt = mock_event_namer._build_naming_prompt(mock_context_edmonton)
+        mock_event_namer._query_ollama(prompt)
 
-        # Extract the prompt
-        call_args = mock_post.call_args
-        posted_data = call_args[1]['json']
-        prompt = posted_data['prompt']
-
-        # Verify specific anti-hallucination constraints
-        assert 'NOT Paris, Vegas' in prompt or 'NOT Paris' in prompt, \
-            "Prompt should explicitly warn against common hallucinated cities"
-        assert 'ONLY use Edmonton' in prompt, \
+        # Verify specific anti-hallucination constraints (updated for new prompt format)
+        assert 'DO NOT invent or change the location' in prompt, \
+            "Prompt should explicitly warn against location hallucination"
+        assert 'ONLY use the provided location' in prompt, \
             "Prompt should enforce using only the provided location"
         assert prompt.count('Edmonton') >= 2, \
             "Edmonton should be mentioned multiple times for emphasis"
@@ -165,21 +159,15 @@ def test_query_ollama_simple_prevents_location_hallucination(mock_event_namer, m
 
 
 @pytest.mark.unit
-def test_query_ollama_simple_with_unknown_location(mock_event_namer):
+def test_query_ollama_with_unknown_location(mock_event_namer, mock_context_edmonton):
     """Test behavior when location is unknown."""
-    print("🧪 Testing Ollama simple query with unknown location")
+    print("🧪 Testing Ollama query with unknown location")
 
-    context_no_location = {
-        'temporal': {
-            'date': '2014_10_25',
-            'time_of_day': 'afternoon',
-            'is_holiday': False
-        },
-        'location': {
-            'city': None,  # No city information
-            'has_gps': False
-        }
-    }
+    # Create a copy of context with no location
+    import copy
+    context_no_location = copy.deepcopy(mock_context_edmonton)
+    context_no_location['location']['city'] = None  # No city information
+    context_no_location['location']['has_gps'] = False
 
     with patch('requests.post') as mock_post:
         mock_response = Mock()
@@ -187,24 +175,20 @@ def test_query_ollama_simple_with_unknown_location(mock_event_namer):
         mock_response.json.return_value = {'response': 'Test Event - Unknown'}
         mock_post.return_value = mock_response
 
-        # Call the method
-        result = mock_event_namer._query_ollama_simple(context_no_location)
+        # Build prompt and call Ollama (new method names)
+        prompt = mock_event_namer._build_naming_prompt(context_no_location)
+        result = mock_event_namer._query_ollama(prompt)
 
-        # Extract the prompt
-        call_args = mock_post.call_args
-        posted_data = call_args[1]['json']
-        prompt = posted_data['prompt']
-
-        # Verify unknown location handling
+        # Verify unknown location handling (updated for new prompt format)
         assert 'Unknown' in prompt, "Should use 'Unknown' when no city provided"
-        assert 'ONLY use Unknown' in prompt, \
+        assert 'ONLY use the provided location' in prompt, \
             "Should still enforce location constraint even with Unknown"
 
     print("✅ Ollama handles unknown location correctly")
 
 
 @pytest.mark.unit
-def test_query_ollama_simple_format_requirements(mock_event_namer, mock_context_edmonton):
+def test_query_ollama_format_requirements(mock_event_namer, mock_context_edmonton):
     """Test that the prompt includes proper format requirements."""
     print("🧪 Testing Ollama prompt includes format requirements")
 
@@ -214,33 +198,32 @@ def test_query_ollama_simple_format_requirements(mock_event_namer, mock_context_
         mock_response.json.return_value = {'response': '2014_10_25 - Test - Edmonton'}
         mock_post.return_value = mock_response
 
-        # Call the method
-        mock_event_namer._query_ollama_simple(mock_context_edmonton)
+        # Build prompt and call Ollama (new method names)
+        prompt = mock_event_namer._build_naming_prompt(mock_context_edmonton)
+        mock_event_namer._query_ollama(prompt)
 
-        # Extract the prompt
-        call_args = mock_post.call_args
-        posted_data = call_args[1]['json']
-        prompt = posted_data['prompt']
-
-        # Verify format requirements
-        assert 'exact format' in prompt or 'Format:' in prompt, "Prompt should include format instructions"
-        assert '2014_10_25 - Event Name - Edmonton' in prompt or '2014_10_25 - Family BBQ - Edmonton' in prompt, \
-            "Prompt should show correct format example"
-        assert 'Example' in prompt or 'CORRECT output' in prompt, "Prompt should include examples"
+        # Verify format requirements (updated for new prompt format)
+        assert 'Format Requirements' in prompt, "Prompt should include format instructions section"
+        assert 'YYYY_MM_DD' in prompt, "Prompt should specify date format"
+        assert 'Examples for Edmonton' in prompt or 'Examples for other locations' in prompt, \
+            "Prompt should include example outputs"
 
     print("✅ Ollama prompt includes proper format requirements")
 
 
 @pytest.mark.unit
-def test_query_ollama_simple_error_handling(mock_event_namer, mock_context_edmonton):
-    """Test error handling in Ollama simple query."""
-    print("🧪 Testing Ollama simple query error handling")
+def test_query_ollama_error_handling(mock_event_namer, mock_context_edmonton):
+    """Test error handling in Ollama query."""
+    print("🧪 Testing Ollama query error handling")
+
+    # Build a test prompt
+    prompt = mock_event_namer._build_naming_prompt(mock_context_edmonton)
 
     # Test HTTP error
     with patch('requests.post') as mock_post:
         mock_post.side_effect = Exception("Connection error")
 
-        result = mock_event_namer._query_ollama_simple(mock_context_edmonton)
+        result = mock_event_namer._query_ollama(prompt)
         assert result is None, "Should return None on connection error"
 
     # Test empty response
@@ -250,10 +233,10 @@ def test_query_ollama_simple_error_handling(mock_event_namer, mock_context_edmon
         mock_response.json.return_value = {'response': ''}
         mock_post.return_value = mock_response
 
-        result = mock_event_namer._query_ollama_simple(mock_context_edmonton)
+        result = mock_event_namer._query_ollama(prompt)
         assert result is None, "Should return None on empty response"
 
-    print("✅ Ollama simple query handles errors correctly")
+    print("✅ Ollama query handles errors correctly")
 
 
 # ===== REGRESSION TESTS FOR ISSUE #14 =====
@@ -271,20 +254,17 @@ def test_issue_14_regression_prevention(mock_event_namer, mock_context_edmonton)
         mock_post.return_value = mock_response
 
         # This exact scenario caused Edmonton -> Paris hallucination before fix
-        result = mock_event_namer._query_ollama_simple(mock_context_edmonton)
+        # Build prompt and call Ollama (new method names)
+        prompt = mock_event_namer._build_naming_prompt(mock_context_edmonton)
+        result = mock_event_namer._query_ollama(prompt)
 
-        # Extract and verify the prompt has location constraints
-        call_args = mock_post.call_args
-        posted_data = call_args[1]['json']
-        prompt = posted_data['prompt']
-
-        # Core regression prevention checks
+        # Core regression prevention checks (updated for new prompt format)
         assert 'Edmonton' in prompt, \
             "REGRESSION: Prompt must include actual location from GPS data"
-        assert 'ONLY use Edmonton' in prompt, \
+        assert 'ONLY use the provided location' in prompt, \
             "REGRESSION: Prompt must enforce location constraint"
-        assert 'NOT Paris' in prompt or 'NOT Paris, Vegas' in prompt, \
-            "REGRESSION: Prompt must warn against hallucinated locations"
+        assert 'DO NOT invent or change the location' in prompt, \
+            "REGRESSION: Prompt must warn against location hallucination"
 
         # Verify result quality
         assert result is not None, "REGRESSION: Should generate a result"
@@ -344,8 +324,8 @@ def test_contains_meta_text_allows_good_outputs(mock_event_namer):
 
 
 @pytest.mark.unit
-def test_query_ollama_simple_rejects_meta_text_responses(mock_event_namer, mock_context_edmonton):
-    """Test that _query_ollama_simple rejects responses containing meta-text."""
+def test_query_ollama_rejects_meta_text_responses(mock_event_namer, mock_context_edmonton):
+    """Test that _query_ollama rejects responses containing meta-text."""
     print("🧪 Testing Ollama query rejects meta-text responses")
 
     with patch('requests.post') as mock_post:
@@ -357,8 +337,9 @@ def test_query_ollama_simple_rejects_meta_text_responses(mock_event_namer, mock_
         }
         mock_post.return_value = mock_response
 
-        # Call the method
-        result = mock_event_namer._query_ollama_simple(mock_context_edmonton)
+        # Build prompt and call Ollama (new method names)
+        prompt = mock_event_namer._build_naming_prompt(mock_context_edmonton)
+        result = mock_event_namer._query_ollama(prompt)
 
         # Should return None because meta-text was detected
         assert result is None, "Should reject response containing meta-text"
@@ -367,8 +348,8 @@ def test_query_ollama_simple_rejects_meta_text_responses(mock_event_namer, mock_
 
 
 @pytest.mark.unit
-def test_query_ollama_simple_accepts_clean_responses(mock_event_namer, mock_context_edmonton):
-    """Test that _query_ollama_simple accepts clean event names."""
+def test_query_ollama_accepts_clean_responses(mock_event_namer, mock_context_edmonton):
+    """Test that _query_ollama accepts clean event names."""
     print("🧪 Testing Ollama query accepts clean responses")
 
     with patch('requests.post') as mock_post:
@@ -380,8 +361,9 @@ def test_query_ollama_simple_accepts_clean_responses(mock_event_namer, mock_cont
         }
         mock_post.return_value = mock_response
 
-        # Call the method
-        result = mock_event_namer._query_ollama_simple(mock_context_edmonton)
+        # Build prompt and call Ollama (new method names)
+        prompt = mock_event_namer._build_naming_prompt(mock_context_edmonton)
+        result = mock_event_namer._query_ollama(prompt)
 
         # Should return the clean event name
         assert result is not None, "Should accept clean response"
@@ -402,22 +384,18 @@ def test_query_ollama_simple_directive_prompt_structure(mock_event_namer, mock_c
         mock_response.json.return_value = {'response': 'Test Event - Edmonton'}
         mock_post.return_value = mock_response
 
-        # Call the method
-        mock_event_namer._query_ollama_simple(mock_context_edmonton)
-
-        # Extract the prompt
-        call_args = mock_post.call_args
-        posted_data = call_args[1]['json']
-        prompt = posted_data['prompt']
+        # Build prompt and call Ollama
+        prompt = mock_event_namer._build_naming_prompt(mock_context_edmonton)
+        result = mock_event_namer._query_ollama(prompt)
 
         # Verify directive structure (not explanatory)
-        assert 'Output ONLY a folder name' in prompt, \
-            "Prompt should use directive 'Output ONLY' instruction"
-        assert 'WRONG - Do NOT output:' in prompt, \
-            "Prompt should include negative examples"
-        assert 'Here are options' in prompt, \
+        assert 'Generate ONLY the folder name' in prompt, \
+            "Prompt should use directive 'Generate ONLY' instruction"
+        assert 'Do NOT output:' in prompt, \
+            "Prompt should include negative directive"
+        assert 'Here are some options' in prompt, \
             "Prompt should show examples of WRONG meta-text output"
-        assert 'Examples of CORRECT output:' in prompt, \
+        assert 'Examples for Edmonton' in prompt or 'Examples for other locations' in prompt, \
             "Prompt should show positive examples"
 
         # Verify it does NOT use explanatory phrasing
@@ -436,6 +414,9 @@ def test_issue_41_regression_prevention(mock_event_namer, mock_context_edmonton)
     print("🧪 REGRESSION TEST: Issue #41 - LLM meta-text prevention")
 
     with patch('requests.post') as mock_post:
+        # Build prompt once
+        prompt = mock_event_namer._build_naming_prompt(mock_context_edmonton)
+
         # Simulate what happened before fix: LLM returns meta-text
         mock_response_bad = Mock()
         mock_response_bad.status_code = 200
@@ -445,7 +426,7 @@ def test_issue_41_regression_prevention(mock_event_namer, mock_context_edmonton)
         mock_post.return_value = mock_response_bad
 
         # This exact scenario caused meta-text output before fix
-        result_bad = mock_event_namer._query_ollama_simple(mock_context_edmonton)
+        result_bad = mock_event_namer._query_ollama(prompt)
 
         # Core regression prevention check: meta-text should be REJECTED
         assert result_bad is None, \
@@ -459,7 +440,7 @@ def test_issue_41_regression_prevention(mock_event_namer, mock_context_edmonton)
         }
         mock_post.return_value = mock_response_good
 
-        result_good = mock_event_namer._query_ollama_simple(mock_context_edmonton)
+        result_good = mock_event_namer._query_ollama(prompt)
 
         # Clean output should be accepted
         assert result_good is not None, \
@@ -468,14 +449,10 @@ def test_issue_41_regression_prevention(mock_event_namer, mock_context_edmonton)
             "REGRESSION: Should return actual event name"
 
         # Verify the prompt includes directive structure
-        call_args = mock_post.call_args
-        posted_data = call_args[1]['json']
-        prompt = posted_data['prompt']
-
-        assert 'Output ONLY a folder name' in prompt, \
+        assert 'Generate ONLY the folder name' in prompt, \
             "REGRESSION: Prompt must use directive structure"
-        assert 'WRONG - Do NOT output:' in prompt, \
-            "REGRESSION: Prompt must include negative examples"
+        assert 'Do NOT output:' in prompt, \
+            "REGRESSION: Prompt must include negative directive"
 
     print("✅ REGRESSION TEST PASSED: Issue #41 prevention mechanisms in place")
 

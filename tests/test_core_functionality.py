@@ -125,43 +125,99 @@ def test_event_naming():
     print("=" * 50)
 
     from src.event_namer import EventNamer
-    from datetime import datetime
+    from src.media_clustering import MediaCluster
+    from src.temporal_clustering import TemporalCluster
+    from src.media_detector import MediaFile
+    from src.geocoding import LocationInfo
+    from datetime import datetime, timedelta
+    from pathlib import Path
 
-    namer = EventNamer(enable_llm=False)  # Use fallback mode
+    namer = EventNamer(enable_llm=True)  # Use LLM for naming (requires Ollama running)
+
+    # Create mock media cluster for testing
+    def create_test_cluster(date, duration_hours, location_city):
+        start_time = date
+        end_time = date + timedelta(hours=duration_hours)
+
+        # Create mock media file
+        media_file = MediaFile(
+            path=Path(f"/tmp/test_{date.strftime('%Y%m%d')}.jpg"),
+            filename=f"test_{date.strftime('%Y%m%d')}.jpg",
+            date=date.date(),
+            time=date,
+            extension='jpg',
+            file_type='photo',
+            size=1000000
+        )
+
+        # Create temporal cluster
+        temporal_cluster = TemporalCluster(
+            cluster_id=0,
+            start_time=start_time,
+            end_time=end_time,
+            duration=end_time - start_time,
+            media_files=[media_file]
+        )
+
+        # Create location info
+        location_info = LocationInfo(
+            latitude=53.5,
+            longitude=-113.5,
+            address=f"Test Address, {location_city}",
+            city=location_city,
+            state="Alberta",
+            country="Canada",
+            raw_data={}
+        ) if location_city else None
+
+        # Create media cluster
+        cluster = MediaCluster(
+            cluster_id=0,
+            media_files=[media_file],
+            temporal_info=temporal_cluster,
+            location_info=location_info,
+            dominant_location=f"{location_city}, Alberta" if location_city else None,
+            gps_coordinates=[(53.5, -113.5)] if location_city else []
+        )
+
+        return cluster
 
     # Test various scenarios
     test_scenarios = [
         {
             'name': 'Weekend Activity',
-            'context': {
-                'date_range': {
-                    'start': datetime(2024, 10, 26, 14, 0),
-                    'end': datetime(2024, 10, 26, 18, 0)
-                },
-                'time_patterns': {'primary_time_of_day': 'Afternoon'},
-                'location_info': {'primary_location': 'Park'},
-                'content_analysis': {'detected_objects': ['person', 'tree', 'dog']},
-                'cluster_size': 15
-            }
+            'cluster': create_test_cluster(
+                datetime(2024, 10, 26, 14, 0),
+                4,  # 4 hours
+                'Edmonton'
+            )
         },
         {
             'name': 'Holiday Celebration',
-            'context': {
-                'date_range': {
-                    'start': datetime(2024, 12, 25, 10, 0),
-                    'end': datetime(2024, 12, 25, 20, 0)
-                },
-                'time_patterns': {'primary_time_of_day': 'All Day'},
-                'location_info': {'primary_location': 'Home'},
-                'content_analysis': {'detected_objects': ['person', 'gift', 'tree']},
-                'cluster_size': 45
-            }
+            'cluster': create_test_cluster(
+                datetime(2024, 12, 25, 10, 0),
+                10,  # 10 hours
+                'Edmonton'
+            )
         }
     ]
 
     print("🧪 Testing event naming scenarios:")
     for scenario in test_scenarios:
-        event_name = namer.generate_event_name(scenario['context'])
+        cluster = scenario['cluster']
+
+        # Convert cluster to dictionary format expected by generate_event_name
+        cluster_data = {
+            'start_time': cluster.temporal_info.start_time,
+            'end_time': cluster.temporal_info.end_time,
+            'duration_hours': cluster.duration_hours,
+            'media_files': cluster.media_files,
+            'location_info': cluster.location_info,
+            'dominant_location': cluster.dominant_location,
+            'gps_coordinates': cluster.gps_coordinates,
+        }
+
+        event_name = namer.generate_event_name(cluster_data)
         print(f"   {scenario['name']}: '{event_name}'")
         # Pytest assertion
         assert event_name is not None, f"Should generate a name for {scenario['name']}"

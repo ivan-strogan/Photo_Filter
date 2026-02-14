@@ -123,12 +123,12 @@ def test_event_naming_with_real_edmonton_gps(event_namer_with_mocked_llm, real_e
 
     # Mock the LLM response to return Edmonton (correct behavior)
     with pytest.MonkeyPatch().context() as m:
-        def mock_query_ollama_simple(context):
-            # Verify context includes Edmonton
-            assert context['location']['city'] == 'Edmonton'
+        def mock_query_ollama(prompt):
+            # Verify prompt includes Edmonton location
+            assert 'Edmonton' in prompt, "Prompt should include Edmonton location"
             return '2014_10_25 - Afternoon Shopping - Edmonton'
 
-        m.setattr(event_namer_with_mocked_llm, '_query_ollama_simple', mock_query_ollama_simple)
+        m.setattr(event_namer_with_mocked_llm, '_query_ollama', mock_query_ollama)
 
         # Run complete event naming
         result = event_namer_with_mocked_llm.generate_event_name(real_edmonton_cluster_data)
@@ -181,19 +181,21 @@ def test_issue_14_end_to_end_regression_prevention(event_namer_with_mocked_llm, 
     # After fix: LLM should generate name with Edmonton
 
     with pytest.MonkeyPatch().context() as m:
-        def mock_query_ollama_that_could_hallucinate(context):
-            # Verify the context has strong location constraints
+        def mock_query_ollama_that_respects_constraints(prompt):
+            # Verify the prompt has strong location constraints
             # This simulates what would happen with real Ollama after our fix
-            location_city = context['location']['city']
-            date = context['temporal']['date']
+            assert 'ONLY use the provided location' in prompt, \
+                "REGRESSION: Prompt must include location constraint"
+            assert 'DO NOT invent or change the location' in prompt, \
+                "REGRESSION: Prompt must warn against hallucination"
 
-            # Simulate LLM response that respects location constraints
-            if location_city == 'Edmonton':
-                return f'{date} - Afternoon Shopping - Edmonton'
+            # Simulate LLM response that respects location constraints in prompt
+            if 'Edmonton' in prompt:
+                return '2014_10_25 - Afternoon Shopping - Edmonton'
             else:
-                return f'{date} - Generic Event - {location_city}'
+                return '2014_10_25 - Generic Event - Unknown'
 
-        m.setattr(event_namer_with_mocked_llm, '_query_ollama_simple', mock_query_ollama_that_could_hallucinate)
+        m.setattr(event_namer_with_mocked_llm, '_query_ollama', mock_query_ollama_that_respects_constraints)
 
         # Run the complete pipeline
         result = event_namer_with_mocked_llm.generate_event_name(real_edmonton_cluster_data)
@@ -225,10 +227,10 @@ def test_validation_accepts_correct_location_names(event_namer_with_mocked_llm, 
 
     for test_name in test_names:
         with pytest.MonkeyPatch().context() as m:
-            def mock_query_returning_name(context):
+            def mock_query_returning_name(prompt):
                 return test_name
 
-            m.setattr(event_namer_with_mocked_llm, '_query_ollama_simple', mock_query_returning_name)
+            m.setattr(event_namer_with_mocked_llm, '_query_ollama', mock_query_returning_name)
 
             result = event_namer_with_mocked_llm.generate_event_name(real_edmonton_cluster_data)
 
@@ -256,10 +258,10 @@ def test_validation_rejects_hallucinated_location_names(event_namer_with_mocked_
 
     for hallucinated_name in hallucinated_names:
         with pytest.MonkeyPatch().context() as m:
-            def mock_query_returning_hallucinated_name(context):
+            def mock_query_returning_hallucinated_name(prompt):
                 return hallucinated_name
 
-            m.setattr(event_namer_with_mocked_llm, '_query_ollama_simple', mock_query_returning_hallucinated_name)
+            m.setattr(event_namer_with_mocked_llm, '_query_ollama', mock_query_returning_hallucinated_name)
 
             result = event_namer_with_mocked_llm.generate_event_name(real_edmonton_cluster_data)
 

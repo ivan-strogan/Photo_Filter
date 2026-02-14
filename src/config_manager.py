@@ -24,6 +24,7 @@ class ProcessingConfig:
     batch_size: int = 16
     use_gpu: bool = True
     enable_vectorization: bool = True
+    enable_content_analysis: bool = True
     enable_geocoding: bool = True
     geocoding_cache_size: int = 10000
 

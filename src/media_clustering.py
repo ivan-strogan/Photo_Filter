@@ -436,7 +436,8 @@ class MediaClusteringEngine:
 
                                     # If faces found but no recognition attempted, log that
                                     if not recognition_attempted:
-                                        self._log_clustering_diagnostics(f"No people were attempted for recognition in {media_file.filename} (faces found: {face_count}, people in database: {len(self.people_database.get_all_people()) if self.people_database else 0})")
+                                        people_in_db = len(self.people_database.list_people()) if self.people_database else 0
+                                        self._log_clustering_diagnostics(f"No people were attempted for recognition in {media_file.filename} (faces found: {face_count}, people in database: {people_in_db})")
 
                                 # Log summary of recognition results
                                 if face_count > 0 and not people_detected:
@@ -662,6 +663,7 @@ class MediaClusteringEngine:
                     'dominant_location': cluster.dominant_location,
                     'gps_coordinates': cluster.gps_coordinates,
                     'content_tags': cluster.content_tags,
+                    'content_analysis': cluster.metadata.get('content_analysis', {}),  # From ContentAnalyzer
                     'people_detected': cluster.people_detected,
                     'confidence_score': cluster.confidence_score,
                     'media_files': cluster.media_files
