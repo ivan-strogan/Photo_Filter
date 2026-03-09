@@ -103,6 +103,12 @@ class MetadataExtractor:
 
     def _extract_exifread_metadata(self, file_path: Path, metadata: Dict[str, Any]) -> None:
         """Extract metadata using exifread for more detailed GPS info."""
+        # Skip video files - exifread doesn't support them and prints
+        # "File format not recognized." to stdout
+        video_extensions = {'.mov', '.mp4', '.m4v', '.avi', '.mkv', '.wmv', '.webm'}
+        if file_path.suffix.lower() in video_extensions:
+            return
+
         try:
             with open(file_path, 'rb') as f:
                 tags = exifread.process_file(f, details=False)
