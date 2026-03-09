@@ -357,11 +357,19 @@ class EventNamer:
             print(f"🔍 EVENT NAMING: Validation result: {is_valid}")
 
             if is_valid:
-                # Cache the result for similar future events
-                print(f"💾 EVENT NAMING: Caching validated name: {event_name}")
-                self.naming_cache[cache_key] = event_name
-                self._save_cache()
-                print(f"💾 EVENT NAMING: Cache saved successfully")
+                # Only cache results with sufficient content confidence
+                # This prevents low-quality results from polluting the cache
+                content_confidence = context['content'].get('confidence', 0.0)
+                min_cache_confidence = 0.5
+
+                if content_confidence >= min_cache_confidence:
+                    # Cache the result for similar future events
+                    print(f"💾 EVENT NAMING: Caching validated name: {event_name} (confidence: {content_confidence:.2f})")
+                    self.naming_cache[cache_key] = event_name
+                    self._save_cache()
+                    print(f"💾 EVENT NAMING: Cache saved successfully")
+                else:
+                    print(f"💾 EVENT NAMING: Skipping cache (confidence {content_confidence:.2f} < {min_cache_confidence})")
             else:
                 # Name was rejected by validation - return None to indicate no good name found
                 print(f"❌ EVENT NAMING: Name rejected by validation, no fallback used")
@@ -1328,11 +1336,30 @@ Output only the folder name now:"""
 
     # Utility methods
     def _generate_cache_key(self, context: Dict[str, Any]) -> str:
-        """Generate cache key for similar events."""
-        # Create a key based on major characteristics
+        """Generate cache key for similar events.
+
+        The cache key must be specific enough to avoid false cache hits where
+        different content gets the same cached name. Includes:
+        - Temporal: time_of_day, duration, day, weekend/weekday
+        - Location: city
+        - Content: event_type, primary_activity, top scenes, top objects
+        - People: people_category (solo/couple/group/no_people)
+        """
         temporal = context['temporal']
         location = context['location']
         content = context['content']
+        people = context.get('people', {})
+
+        # Get top scenes and objects for more specific cache key
+        scenes = content.get('scenes', [])
+        objects = content.get('objects', [])
+
+        # Sort and join top 2 scenes for consistency
+        scene_key = '_'.join(sorted(scenes[:2])) if scenes else 'unknown_scene'
+        # Sort and join top 3 objects for consistency
+        object_key = '_'.join(sorted(objects[:3])) if objects else 'unknown_objects'
+        # People category for social context
+        people_category = people.get('people_category', 'unknown')
 
         key_parts = [
             temporal['time_of_day'],
@@ -1341,7 +1368,10 @@ Output only the folder name now:"""
             'weekend' if temporal['is_weekend'] else 'weekday',
             location['city'],
             content['event_type'],
-            content['primary_activity']
+            content['primary_activity'],
+            scene_key,
+            object_key,
+            people_category
         ]
 
         return "|".join(str(part) for part in key_parts)

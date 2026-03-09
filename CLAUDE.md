@@ -116,7 +116,7 @@ python main.py config update --time-threshold 8.0  # Update config parameters
 tests/
 ├── unit/                     # Fast unit tests (~15 seconds total)
 │   ├── test_clustering_face_unit.py                    # Face recognition unit tests (17 tests)
-│   ├── test_event_namer_unit.py                        # Event naming unit tests (6 tests)
+│   ├── test_event_namer_unit.py                        # Event naming unit tests (16 tests)
 │   └── test_clustering_face_integration_fake_BACKUP.py # Legacy mocked tests (backup)
 ├── integration/              # Slower integration tests (~15 seconds total)
 │   ├── test_clustering_face_integration.py             # Real photo face recognition tests (5 tests)
@@ -195,7 +195,7 @@ The event naming system has comprehensive test coverage for LLM integration and 
 
 - **Unit Tests** (`tests/unit/test_event_namer_unit.py`): Fast tests with mocked LLM responses, validates prompt generation, location constraints, and anti-hallucination measures
 - **Integration Tests** (`tests/integration/test_event_naming_integration.py`): End-to-end tests with real context processing and validation system verification
-- **Regression Tests**: Prevents regression of Issue #14 (LLM location hallucination) and validates Issue #15 (validation system accuracy)
+- **Regression Tests**: Prevents regression of Issue #14 (LLM location hallucination), Issue #41 (meta-text generation), and Issue #54 (cache key granularity)
 
 ```bash
 # Run event naming tests specifically

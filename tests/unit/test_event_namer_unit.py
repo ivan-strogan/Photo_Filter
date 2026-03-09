@@ -457,6 +457,132 @@ def test_issue_41_regression_prevention(mock_event_namer, mock_context_edmonton)
     print("✅ REGRESSION TEST PASSED: Issue #41 prevention mechanisms in place")
 
 
+# ===== UNIT TESTS FOR ISSUE #54 FIX (CACHE KEY GRANULARITY) =====
+
+@pytest.mark.unit
+def test_cache_key_includes_scene_and_object_info(mock_event_namer, mock_context_edmonton):
+    """Test that cache key includes scene and object information (Issue #54 fix)."""
+    print("🧪 Testing cache key includes scene and object info")
+
+    import copy
+
+    # Context with specific scenes and objects
+    context_fitting_room = copy.deepcopy(mock_context_edmonton)
+    context_fitting_room['content']['scenes'] = ['indoor', 'store']
+    context_fitting_room['content']['objects'] = ['person', 'mirror', 'clothing']
+
+    # Different context with different scenes and objects
+    context_office = copy.deepcopy(mock_context_edmonton)
+    context_office['content']['scenes'] = ['indoor', 'office']
+    context_office['content']['objects'] = ['person', 'laptop', 'desk']
+
+    # Generate cache keys
+    key_fitting_room = mock_event_namer._generate_cache_key(context_fitting_room)
+    key_office = mock_event_namer._generate_cache_key(context_office)
+
+    # Keys should be different due to different content
+    assert key_fitting_room != key_office, \
+        "Cache keys should differ for different scenes/objects"
+
+    # Keys should contain scene and object info
+    assert 'indoor' in key_fitting_room, "Cache key should contain scene info"
+    assert 'store' in key_fitting_room, "Cache key should contain scene info"
+    assert 'mirror' in key_fitting_room or 'clothing' in key_fitting_room, \
+        "Cache key should contain object info"
+
+    print("✅ Cache key correctly includes scene and object info")
+
+
+@pytest.mark.unit
+def test_cache_key_includes_people_category(mock_event_namer, mock_context_edmonton):
+    """Test that cache key includes people category (Issue #54 fix)."""
+    print("🧪 Testing cache key includes people category")
+
+    import copy
+
+    # Context with solo person
+    context_solo = copy.deepcopy(mock_context_edmonton)
+    context_solo['people']['people_category'] = 'solo'
+
+    # Context with group
+    context_group = copy.deepcopy(mock_context_edmonton)
+    context_group['people']['people_category'] = 'group'
+
+    # Generate cache keys
+    key_solo = mock_event_namer._generate_cache_key(context_solo)
+    key_group = mock_event_namer._generate_cache_key(context_group)
+
+    # Keys should be different due to different people category
+    assert key_solo != key_group, \
+        "Cache keys should differ for different people categories"
+
+    # Keys should contain people category
+    assert 'solo' in key_solo, "Solo cache key should contain 'solo'"
+    assert 'group' in key_group, "Group cache key should contain 'group'"
+
+    print("✅ Cache key correctly includes people category")
+
+
+@pytest.mark.unit
+def test_cache_key_handles_empty_content(mock_event_namer, mock_context_edmonton):
+    """Test that cache key handles missing/empty content gracefully."""
+    print("🧪 Testing cache key handles empty content")
+
+    import copy
+
+    # Context with empty content
+    context_empty = copy.deepcopy(mock_context_edmonton)
+    context_empty['content']['scenes'] = []
+    context_empty['content']['objects'] = []
+
+    # Should not crash
+    key = mock_event_namer._generate_cache_key(context_empty)
+
+    # Should have fallback values
+    assert 'unknown_scene' in key, "Should use 'unknown_scene' when no scenes"
+    assert 'unknown_objects' in key, "Should use 'unknown_objects' when no objects"
+
+    print("✅ Cache key handles empty content gracefully")
+
+
+@pytest.mark.unit
+@pytest.mark.regression
+def test_issue_54_regression_different_content_different_keys(mock_event_namer, mock_context_edmonton):
+    """Regression test: different photo content must produce different cache keys (Issue #54)."""
+    print("🧪 REGRESSION TEST: Issue #54 - Cache key granularity")
+
+    import copy
+
+    # Simulate the original bug scenario:
+    # Two photos with same temporal/location but different content
+
+    # Photo 1: Fitting room (the misclassified photo)
+    context_fitting = copy.deepcopy(mock_context_edmonton)
+    context_fitting['content']['scenes'] = ['indoor', 'store']
+    context_fitting['content']['objects'] = ['person', 'mirror', 'clothing']
+    context_fitting['content']['activities'] = ['shopping']
+    context_fitting['content']['primary_activity'] = 'shopping'
+    context_fitting['people']['people_category'] = 'solo'
+
+    # Photo 2: Office (what it was incorrectly cached as)
+    context_office = copy.deepcopy(mock_context_edmonton)
+    context_office['content']['scenes'] = ['indoor', 'office']
+    context_office['content']['objects'] = ['person', 'laptop', 'desk']
+    context_office['content']['activities'] = ['working']
+    context_office['content']['primary_activity'] = 'working'
+    context_office['people']['people_category'] = 'no_people'
+
+    # Generate cache keys
+    key_fitting = mock_event_namer._generate_cache_key(context_fitting)
+    key_office = mock_event_namer._generate_cache_key(context_office)
+
+    # CRITICAL: Keys MUST be different to prevent the Issue #54 bug
+    assert key_fitting != key_office, \
+        "REGRESSION #54: Different content MUST produce different cache keys"
+
+    print("✅ REGRESSION TEST PASSED: Issue #54 cache key granularity fix verified")
+
+
 if __name__ == "__main__":
     """Run the event namer unit tests standalone."""
     print("🧪 Event Namer Unit Tests")
@@ -466,6 +592,7 @@ if __name__ == "__main__":
     print("   3. Prompt generation validation tests")
     print("   4. Error handling tests")
     print("   5. Regression prevention tests (Issues #14, #41)")
+    print("   6. Cache key granularity tests (Issue #54)")
     print()
     print("⚡ Expected time: <5 seconds total")
     print("🔧 Testing approach: Fast unit tests with mocked dependencies")

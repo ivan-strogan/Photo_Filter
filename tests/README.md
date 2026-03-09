@@ -11,7 +11,7 @@ tests/
 ├── unit/                     # Fast unit tests (~15 seconds total)
 │   ├── __init__.py
 │   ├── test_clustering_face_unit.py                    # Face recognition unit tests (17 tests)
-│   ├── test_event_namer_unit.py                        # Event naming unit tests (6 tests)
+│   ├── test_event_namer_unit.py                        # Event naming unit tests (16 tests)
 │   └── test_clustering_face_integration_fake_BACKUP.py # Legacy mocked tests (backup)
 ├── integration/              # Real component integration tests (~15 seconds total)
 │   ├── __init__.py
@@ -194,13 +194,17 @@ pytest -m "unit or (integration and not slow)"
 
 ### Unit Tests (`test_event_namer_unit.py`)
 
-**Tests 6 scenarios** including:
+**Tests 16 scenarios** including:
 - Ollama prompt location constraint validation
 - Anti-hallucination prompt engineering tests
 - Location constraint enforcement with unknown locations
 - Format requirement validation
 - Error handling for LLM failures
+- Meta-text detection and rejection (Issue #41)
+- Cache key granularity with scenes/objects/people (Issue #54)
 - Issue #14 regression prevention (location hallucination)
+- Issue #41 regression prevention (meta-text generation)
+- Issue #54 regression prevention (cache key granularity)
 
 ### Integration Tests (`test_event_naming_integration.py`)
 
@@ -291,13 +295,13 @@ def test_real_workflow_with_actual_data():
 
 ### Current Performance (as of implementation)
 
-- **Unit Tests**: 23 tests in ~15 seconds (0.7 seconds average)
+- **Unit Tests**: 33 tests in ~15 seconds (0.5 seconds average)
   - Face recognition: 17 tests in ~10 seconds
-  - Event naming: 6 tests in ~6 seconds
+  - Event naming: 16 tests in ~8 seconds
 - **Integration Tests**: 10 tests in ~15 seconds (1.5 seconds average)
   - Face recognition: 5 tests in ~10 seconds
   - Event naming: 5 tests in ~6 seconds
-- **Total Test Suite**: 33 tests in ~30 seconds
+- **Total Test Suite**: 43 tests in ~30 seconds
 - **Legacy Tests**: Various (maintained for backward compatibility)
 
 ### Performance Targets
