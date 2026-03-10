@@ -583,6 +583,93 @@ def test_issue_54_regression_different_content_different_keys(mock_event_namer, 
     print("✅ REGRESSION TEST PASSED: Issue #54 cache key granularity fix verified")
 
 
+@pytest.mark.unit
+@pytest.mark.regression
+def test_issue_62_cache_key_handles_tuple_format(mock_event_namer, mock_context_edmonton):
+    """Regression test: cache key must handle tuple format from content analyzer (Issue #62).
+
+    The ContentAnalyzer returns scenes/objects as tuples like ('home', 6) where
+    the second element is a count. The cache key generation must extract just
+    the names and not crash when encountering this format.
+    """
+    print("🧪 REGRESSION TEST: Issue #62 - Tuple format handling in cache key")
+
+    import copy
+
+    # Use TUPLE FORMAT as returned by ContentAnalyzer in production
+    context_tuple = copy.deepcopy(mock_context_edmonton)
+    context_tuple['content']['scenes'] = [('home', 6), ('indoor', 5), ('urban', 2)]
+    context_tuple['content']['objects'] = [('tree', 3), ('wine', 3), ('person', 1)]
+
+    # Should NOT crash - this was the Issue #62 bug
+    key = mock_event_namer._generate_cache_key(context_tuple)
+
+    # Key should contain the scene/object names (not tuples)
+    assert 'home' in key or 'indoor' in key, \
+        "Cache key should contain scene name from tuple"
+    assert '(' not in key, \
+        "REGRESSION #62: Cache key should NOT contain tuple parentheses"
+    assert '6' not in key, \
+        "REGRESSION #62: Cache key should NOT contain tuple counts"
+
+    print("✅ REGRESSION TEST PASSED: Issue #62 tuple format handling verified")
+
+
+@pytest.mark.unit
+@pytest.mark.regression
+def test_issue_62_event_naming_flow_completes(mock_event_namer, mock_context_edmonton):
+    """Regression test: event naming flow must not crash before reaching LLM (Issue #62).
+
+    This test ensures the entire event naming pipeline works with production-like
+    data formats. If any step crashes (like cache key generation), this test fails.
+    """
+    print("🧪 REGRESSION TEST: Issue #62 - Event naming flow completion")
+
+    import copy
+    from unittest.mock import patch
+
+    # Create context with TUPLE FORMAT (production format)
+    context = copy.deepcopy(mock_context_edmonton)
+    context['content']['scenes'] = [('home', 6), ('indoor', 5)]
+    context['content']['objects'] = [('tree', 3), ('wine', 3)]
+    context['content']['activities'] = [('drinking', 3)]
+
+    # Create minimal cluster_data for generate_event_name
+    # Note: start_time and end_time must be datetime objects, not strings
+    cluster_data = {
+        'start_time': datetime(2024, 1, 1, 12, 0, 0),
+        'end_time': datetime(2024, 1, 1, 14, 0, 0),
+        'duration_hours': 2.0,
+        'size': 5,
+        'photo_count': 5,
+        'video_count': 0,
+        'location_info': None,
+        'dominant_location': 'Edmonton, Alberta',
+        'gps_coordinates': [(53.5, -113.5)],
+        'content_tags': ['tree', 'wine'],
+        'content_analysis': {
+            'top_scenes': [('home', 6), ('indoor', 5)],
+            'top_objects': [('tree', 3), ('wine', 3)],
+            'top_activities': [('drinking', 3)],
+            'average_confidence': 0.9
+        },
+        'people_detected': ['Test Person'],
+        'confidence_score': 0.8,
+        'media_files': []
+    }
+
+    # Mock the LLM call to return a valid name (we just want to verify flow completes)
+    with patch.object(mock_event_namer, '_generate_llm_name', return_value='2024_01_01 - Test Event - Edmonton'):
+        # This should NOT crash - the flow must complete to the LLM call
+        result = mock_event_namer.generate_event_name(cluster_data)
+
+    # Verify we got a result (not None, which would indicate early crash)
+    assert result is not None, \
+        "REGRESSION #62: Event naming must not crash before returning a result"
+
+    print("✅ REGRESSION TEST PASSED: Issue #62 event naming flow completes")
+
+
 if __name__ == "__main__":
     """Run the event namer unit tests standalone."""
     print("🧪 Event Namer Unit Tests")

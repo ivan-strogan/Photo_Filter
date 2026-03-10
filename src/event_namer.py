@@ -1351,8 +1351,13 @@ Output only the folder name now:"""
         people = context.get('people', {})
 
         # Get top scenes and objects for more specific cache key
-        scenes = content.get('scenes', [])
-        objects = content.get('objects', [])
+        # Note: scenes/objects may be tuples like ('home', 6) or strings
+        raw_scenes = content.get('scenes', [])
+        raw_objects = content.get('objects', [])
+
+        # Extract scene names (handle both tuple and string formats)
+        scenes = [s[0] if isinstance(s, tuple) else s for s in raw_scenes]
+        objects = [o[0] if isinstance(o, tuple) else o for o in raw_objects]
 
         # Sort and join top 2 scenes for consistency
         scene_key = '_'.join(sorted(scenes[:2])) if scenes else 'unknown_scene'
