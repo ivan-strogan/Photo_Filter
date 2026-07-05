@@ -54,24 +54,28 @@ Photo_Filter/
 ## Installation
 
 1. **Clone the repository**
+
    ```bash
    git clone <repository_url>
    cd Photo_Filter
    ```
 
 2. **Create virtual environment with Python 3.11**
+
    ```bash
    python3.11 -m venv venv_py311
    source venv_py311/bin/activate  # On Windows: venv_py311\\Scripts\\activate
    ```
 
 3. **Install core dependencies**
+
    ```bash
    pip install --upgrade pip
    pip install -r requirements.txt
    ```
 
 4. **Optional: Install face recognition dependencies**
+
    ```bash
    # macOS with Homebrew
    brew install cmake
@@ -95,6 +99,7 @@ ollama serve
 Keep this terminal running while you use the Photo Filter app. The event naming system requires an active LLM connection and will fail if Ollama is not running.
 
 **Install Ollama** (if not already installed):
+
 ```bash
 # macOS/Linux
 curl https://ollama.ai/install.sh | sh
@@ -103,6 +108,7 @@ curl https://ollama.ai/install.sh | sh
 ```
 
 **Download the required model**:
+
 ```bash
 ollama pull llama3.1:8b
 ```
@@ -163,6 +169,7 @@ The system uses a JSON configuration file with customizable parameters:
 ## File Organization
 
 ### Input Structure
+
 ```
 Sample_Photos/
 ├── iPhone Automatic/       # Unorganized photos from iPhone
@@ -177,10 +184,125 @@ Sample_Photos/
 ```
 
 ### Output Format
+
 The system suggests organized folder names like:
+
 - `2024_10_24 - Mexico Vacation`
 - `2024_11_15 - Birthday Party - Quick Event`
 - `2024_12_25 - Edmonton - All Day`
+
+## System Architecture
+
+### Flow Overview
+
+Two flows run in the system: **Library Learning** (run once or periodically to ingest existing organized photos) and **New Photo Processing** (the main pipeline for unorganized photos).
+
+```
+╔══════════════════════════════════════════════════════════════════╗
+║  FLOW A: LIBRARY LEARNING  (python main.py scan)                 ║
+╚══════════════════════════════════════════════════════════════════╝
+
+  Organized Library                ChromaDB Vector DB
+  ┌──────────────────┐             ┌─────────────────────────────┐
+  │ 2024_01_15 -     │             │                             │
+  │   Elena's        │──────────►  │  embedding + event_folder   │
+  │   Birthday/      │  CLIP       │  "2024_01_15 - Elena's      │
+  │                  │  embed      │   Birthday"                 │
+  │ 2024_07_04 -     │             │                             │
+  │   Beach Day/     │──────────►  │  embedding + event_folder   │
+  │                  │             │  "2024_07_04 - Beach Day"   │
+  │ ...              │             │  ...                        │
+  └──────────────────┘             └─────────────────────────────┘
+  OrganizedPhotosScanner           PhotoVectorizer → VectorDatabase
+  reads folder names &
+  samples photos per event
+
+
+╔══════════════════════════════════════════════════════════════════╗
+║  FLOW B: NEW PHOTO PROCESSING  (python main.py process)          ║
+╚══════════════════════════════════════════════════════════════════╝
+
+  iPhone Automatic/
+  ┌───────────────────────┐
+  │ IMG_20240115_143000   │
+  │ IMG_20240115_143015   │   Stage 1: SCAN & VALIDATE
+  │ IMG_20240704_103000   │──────────────────────────────────────────►
+  │ IMG_20240704_103200   │   MediaDetector  →  MediaValidator
+  │ ...                   │   (parse filename datetime)
+  └───────────────────────┘
+
+  Stage 2: CLUSTER
+  ┌──────────────────────────────────────────────────────────────┐
+  │                                                              │
+  │  TemporalClustering          LocationEnrichment              │
+  │  ┌──────────────┐            ┌──────────────────┐            │
+  │  │ group by     │            │ GPS coords →     │            │
+  │  │ time gaps    │──────────► │ Nominatim geocode│            │
+  │  │ (6hr default)│            │ → city / venue   │            │
+  │  └──────────────┘            └──────────────────┘            │
+  │                                      │                       │
+  │  FaceRecognizer                      │                       │
+  │  ┌──────────────┐                    │                       │
+  │  │ detect faces │  PeopleDatabase    │                       │
+  │  │ in photos    │──► match known ────┤                       │
+  │  │              │    people          │                       │
+  │  └──────────────┘                    │                       │
+  │                                      │                       │
+  │  ContentAnalyzer (CLIP)              │                       │
+  │  ┌──────────────┐                    │                       │
+  │  │ classify     │                    │                       │
+  │  │ scenes /     │────────────────────┤                       │
+  │  │ objects /    │                    │                       │
+  │  │ activities   │                    ▼                       │
+  │  └──────────────┘            MediaClusteringEngine           │
+  │                               combines all signals           │
+  │                               → final clusters               │
+  └──────────────────────────────────────────────────────────────┘
+
+  Stage 3: NAME
+  ┌──────────────────────────────────────────────────────────────┐
+  │                                                              │
+  │  EventNamer                                                  │
+  │                                                              │
+  │  ┌─────────────────────┐    ┌────────────────────────────┐   │
+  │  │ Context assembled:  │    │ ChromaDB Vector DB         │   │
+  │  │  • date / duration  │    │                            │   │
+  │  │  • city / venue     │◄───│ find visually similar      │   │
+  │  │  • scenes / objects │    │ photos from organized      │   │
+  │  │  • people detected  │    │ library → return past      │   │
+  │  │  • past event names │    │ event folder names         │   │
+  │  └──────────┬──────────┘    └────────────────────────────┘   │
+  │             │                                                │
+  │             ▼                                                │
+  │  ┌─────────────────────┐                                     │
+  │  │  Ollama (LLaVA /    │  prompt includes all context        │
+  │  │  llama3.1:8b)       │  + similar past event names         │
+  │  │                     │──► "2024_01_15 - Elena's Birthday"  │
+  │  └─────────────────────┘                                     │
+  │                                                              │
+  └──────────────────────────────────────────────────────────────┘
+
+  Stage 4–5: ORGANIZE
+  ┌──────────────────────────────────────────────────────────────┐
+  │                                                              │
+  │  FolderOrganizer                    FileOrganizer            │
+  │  ┌──────────────────┐               ┌──────────────────┐     │
+  │  │ create folder    │               │ move / copy      │     │
+  │  │ structure with   │──────────────►│ photos into      │     │
+  │  │ conflict         │               │ new folders      │     │
+  │  │ resolution       │               │                  │     │
+  │  └──────────────────┘               └──────────────────┘     │
+  │                                                              │
+  └──────────────────────────────────────────────────────────────┘
+
+  Output:  Pictures/2024/2024_01_15 - Elena's Birthday/
+                         2024_07_04 - Beach Day - Vancouver/
+                         ...
+```
+
+### How the Two Flows Connect
+
+Flow A runs first (or periodically as you add photos to your library). It builds a ChromaDB index of your existing organized photos tagged with their folder names. Flow B uses that index in Stage 3 — when naming a new cluster, EventNamer queries ChromaDB for visually similar past photos and includes the matching folder names in the LLM prompt. This gives the LLM a memory of your naming conventions, so recurring events (annual birthdays, holiday trips) are named consistently.
 
 ## Clustering Algorithm
 
@@ -213,6 +335,7 @@ pytest tests/
 ## Development Status
 
 **Completed Features (18/24):**
+
 - ✅ Media detection and parsing
 - ✅ Metadata extraction (photos & videos)
 - ✅ Temporal clustering algorithms
@@ -224,9 +347,11 @@ pytest tests/
 - ✅ Face detection and recognition
 
 **In Progress:**
+
 - ⚠️ LLM integration for intelligent event naming
 
 **Remaining Features:**
+
 - 🔄 Video content analysis
 - 🔄 Automated folder creation
 - 🔄 Media moving/copying system
@@ -234,6 +359,7 @@ pytest tests/
 ## Dependencies
 
 ### Core Dependencies
+
 - `click` - CLI interface
 - `Pillow` - Image processing
 - `exifread` - EXIF metadata extraction
@@ -242,6 +368,7 @@ pytest tests/
 - `python-dateutil` - Date parsing
 
 ### Required ML Dependencies
+
 - `torch` - PyTorch for neural networks (REQUIRED)
 - `transformers` - Hugging Face models for CLIP/BLIP (REQUIRED)
 - `sentence-transformers` - Text embeddings
@@ -268,23 +395,27 @@ Key settings can be adjusted via the configuration system:
 **MANDATORY**: All contributions must follow this GitHub workflow for proper tracking:
 
 ### 1. Create Issue First
+
 ```bash
 gh issue create --title "type: description" --body "Requirements and acceptance criteria"
 ```
 
 ### 2. Create Feature Branch
+
 ```bash
 git checkout -b feature/ISSUE#-description
 # Example: git checkout -b feature/1-github-workflow-docs
 ```
 
 ### 3. Make Changes & Commit
+
 ```bash
 git add .
 git commit -m "type: description - addresses issue #ISSUE#"
 ```
 
 ### 4. Create Pull Request
+
 ```bash
 git push -u origin feature/ISSUE#-description
 gh pr create --title "type: description" --body "Fixes #ISSUE#"
@@ -295,6 +426,7 @@ Issues automatically close when PRs are merged, maintaining complete audit trail
 ## Contributing
 
 See [CLAUDE.md](./CLAUDE.md) for detailed development guidelines including:
+
 - Architecture overview and data flow
 - Testing procedures with pytest
 - Configuration management
