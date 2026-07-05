@@ -295,27 +295,49 @@ class MediaClusteringEngine:
                     else:
                         files_without_gps.append(media_file)
 
-                # Create location-based clusters for files with GPS
+                # Create location-based clusters for files with GPS.
+                # cluster.gps_coordinates was built by iterating media_files in
+                # order and appending one entry per file that has GPS, so
+                # gps_coordinates[idx] pairs positionally with files_with_gps[idx].
+                # Matching by coordinate value instead would collapse burst photos
+                # (identical GPS) onto the first file repeatedly (issue #70).
+                gps_files_aligned = len(files_with_gps) == len(cluster.gps_coordinates)
+                if not gps_files_aligned:
+                    self.logger.warning(
+                        f"GPS/file alignment mismatch in cluster {cluster.cluster_id}: "
+                        f"{len(files_with_gps)} files vs {len(cluster.gps_coordinates)} "
+                        f"coordinates - falling back to coordinate matching")
+
+                used_file_indices = set()
                 for loc_cluster_indices in location_clusters:
                     # Create new cluster for this location group
                     location_files = []
                     location_coords = []
 
                     for idx in loc_cluster_indices:
-                        # Find corresponding media file
                         gps_coord = cluster.gps_coordinates[idx]
 
-                        # Find media files with this GPS coordinate
-                        for media_file in files_with_gps:
-                            metadata = self.metadata_extractor.extract_photo_metadata(media_file)
-                            file_gps = metadata.get('gps_coordinates')
+                        if gps_files_aligned:
+                            if idx in used_file_indices:
+                                continue
+                            used_file_indices.add(idx)
+                            location_files.append(files_with_gps[idx])
+                            location_coords.append(gps_coord)
+                        else:
+                            # Fallback: coordinate matching, each file used at most once
+                            for file_idx, media_file in enumerate(files_with_gps):
+                                if file_idx in used_file_indices:
+                                    continue
+                                metadata = self.metadata_extractor.extract_photo_metadata(media_file)
+                                file_gps = metadata.get('gps_coordinates')
 
-                            if (file_gps and len(file_gps) == 2 and
-                                abs(file_gps[0] - gps_coord[0]) < 0.001 and
-                                abs(file_gps[1] - gps_coord[1]) < 0.001):
-                                location_files.append(media_file)
-                                location_coords.append(gps_coord)
-                                break
+                                if (file_gps and len(file_gps) == 2 and
+                                    abs(file_gps[0] - gps_coord[0]) < 0.001 and
+                                    abs(file_gps[1] - gps_coord[1]) < 0.001):
+                                    used_file_indices.add(file_idx)
+                                    location_files.append(media_file)
+                                    location_coords.append(gps_coord)
+                                    break
 
                     # Always create cluster regardless of size (min_cluster_size = 1)
                     if location_files:
@@ -343,6 +365,18 @@ class MediaClusteringEngine:
 
                         refined_clusters.append(new_cluster)
                         cluster_id_counter += 1
+
+                # Any GPS files never assigned to a location group (only possible
+                # on the fallback matching path) must not be lost - group them
+                # with the no-GPS files so every input file lands in a cluster.
+                leftover_gps_files = [f for i, f in enumerate(files_with_gps)
+                                      if i not in used_file_indices]
+                if leftover_gps_files:
+                    self.logger.warning(
+                        f"{len(leftover_gps_files)} GPS files unmatched during location "
+                        f"refinement of cluster {cluster.cluster_id} - keeping them in "
+                        f"a separate cluster instead of dropping them")
+                    files_without_gps.extend(leftover_gps_files)
 
                 # Create a separate cluster for files without GPS coordinates
                 if files_without_gps:
