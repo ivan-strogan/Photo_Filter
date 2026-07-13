@@ -63,3 +63,6 @@ temp/
 # Env
 
 .env
+
+# Local Claude Code project instructions - not committed
+CLAUDE.md
