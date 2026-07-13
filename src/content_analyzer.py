@@ -2,7 +2,9 @@
 Content analysis for photos using computer vision models.
 
 This module analyzes photos to understand what's in them - objects, scenes,
-activities, and provides natural language descriptions using CLIP and BLIP models.
+activities, and provides natural language descriptions. Classification (objects/
+scenes) uses CLIP locally via transformers; captioning uses a vision LLM served
+by Ollama (model selected via PHOTO_FILTER_CAPTION_MODEL, see environment_config.py).
 
 IMPORTANT: This module REQUIRES local AI models to function. The application will
 fail explicitly if transformers/torch dependencies are not available.
@@ -10,10 +12,12 @@ fail explicitly if transformers/torch dependencies are not available.
 For junior developers:
 - Uses lazy loading pattern - models loaded only when needed
 - Implements caching to avoid re-analyzing the same photos
-- Requires CLIP (classification) and BLIP (captioning) models
-- Supports GPU acceleration when available
+- Requires CLIP (classification, local) and Ollama (captioning, HTTP) models
+- Supports GPU acceleration when available for CLIP
 """
 
+import base64
+import io
 import logging
 from pathlib import Path
 from typing import Dict, List, Any, Optional, Tuple
@@ -21,15 +25,16 @@ from dataclasses import dataclass
 import json
 
 # Always import PIL for basic image handling (this is required)
-from PIL import Image
+from PIL import Image, ImageOps
+
+from .environment_config import get_caption_model, get_ollama_url
 
 # Import ML components only when needed - this is "optional dependency" pattern
 # The app works without these, but has more features when they're available
 try:
     import torch                                          # PyTorch for deep learning
-    from transformers import BlipProcessor, BlipForConditionalGeneration  # Image captioning
     from transformers import CLIPProcessor, CLIPModel     # Image classification
-    import requests                                       # For potential API calls
+    import requests                                       # Ollama HTTP calls
     TRANSFORMERS_AVAILABLE = True                         # Flag to track if ML is available
 except ImportError:
     # ML libraries not installed - we'll use basic analysis instead
@@ -48,7 +53,7 @@ class ContentAnalysis:
     - activities: What's happening (eating, vacation, celebration, etc.)
     - description: Natural language description of the photo
     - confidence_score: How confident we are (0.0 to 1.0)
-    - analysis_model: Which model was used (Basic, CLIP+BLIP, etc.)
+    - analysis_model: Which model was used (Basic, CLIP+<vision model>, etc.)
     - people_detected: List of identified people in the photo
     - face_count: Number of faces detected
     """
@@ -64,22 +69,25 @@ class ContentAnalysis:
 class ContentAnalyzer:
     """Analyzes photo content using computer vision models."""
 
-    def __init__(self, use_gpu: bool = True, face_recognizer=None):
+    def __init__(self, use_gpu: bool = True, face_recognizer=None,
+                 vision_model: Optional[str] = None, ollama_url: Optional[str] = None):
         """Initialize content analyzer.
 
         Args:
-            use_gpu: Whether to use GPU acceleration
+            use_gpu: Whether to use GPU acceleration (CLIP only)
             face_recognizer: Optional FaceRecognizer instance for people detection
+            vision_model: Ollama model used for captioning (default: PHOTO_FILTER_CAPTION_MODEL)
+            ollama_url: Ollama server URL (default: PHOTO_FILTER_OLLAMA_URL)
         """
         self.logger = logging.getLogger(__name__)
         self.use_gpu = use_gpu
         self.face_recognizer = face_recognizer
+        self.vision_model = vision_model or get_caption_model()
+        self.ollama_url = ollama_url or get_ollama_url()
 
         # Model components (lazy loaded)
         self.clip_model = None
         self.clip_processor = None
-        self.blip_model = None
-        self.blip_processor = None
 
         # Cache for analysis results
         self.analysis_cache = {}
@@ -129,18 +137,6 @@ class ContentAnalyzer:
                 else:
                     self.logger.info("CLIP model loaded on CPU")
 
-            # Initialize BLIP for image captioning
-            if self.blip_model is None:
-                self.logger.info("Loading BLIP model for image captioning...")
-                self.blip_model = BlipForConditionalGeneration.from_pretrained("Salesforce/blip-image-captioning-base")
-                self.blip_processor = BlipProcessor.from_pretrained("Salesforce/blip-image-captioning-base")
-
-                if self.use_gpu and torch.cuda.is_available():
-                    self.blip_model = self.blip_model.cuda()
-                    self.logger.info("BLIP model loaded on GPU")
-                else:
-                    self.logger.info("BLIP model loaded on CPU")
-
             return True
 
         except Exception as e:
@@ -162,8 +158,10 @@ class ContentAnalyzer:
             if cache_key in self.analysis_cache:
                 return self.analysis_cache[cache_key]
 
-            # Load and preprocess image
-            image = Image.open(photo_path)
+            # Load and preprocess image. EXIF-transpose before anything else -
+            # sideways/upside-down photos (common with phone orientation
+            # metadata) caption and classify badly otherwise.
+            image = ImageOps.exif_transpose(Image.open(photo_path))
             if image.mode != 'RGB':
                 image = image.convert('RGB')
 
@@ -183,9 +181,9 @@ class ContentAnalyzer:
             return None
 
     def _comprehensive_analysis(self, image: Image.Image, photo_path: Path) -> ContentAnalysis:
-        """Perform comprehensive content analysis using CLIP and BLIP."""
+        """Perform comprehensive content analysis using CLIP and the Ollama vision model."""
         try:
-            # Generate image description using BLIP
+            # Generate image description using the Ollama vision model
             description = self._generate_description(image)
 
             # Classify scenes using CLIP
@@ -209,7 +207,7 @@ class ContentAnalyzer:
                 activities=activities,
                 description=description,
                 confidence_score=confidence,
-                analysis_model="CLIP+BLIP+Face Recognition" if self.face_recognizer else "CLIP+BLIP",
+                analysis_model=f"CLIP+{self.vision_model}+Face Recognition" if self.face_recognizer else f"CLIP+{self.vision_model}",
                 people_detected=people_detected,
                 face_count=face_count
             )
@@ -218,19 +216,30 @@ class ContentAnalyzer:
             self.logger.error(f"Error in comprehensive analysis: {e}")
             raise RuntimeError(f"Content analysis failed for {photo_path.name}: {e}") from e
 
+    _CAPTION_PROMPT = (
+        "Describe this photo in 2-3 sentences, covering: the setting, any visible "
+        "occasion clues (decorations, cake, rings, attire), how many people are "
+        "visible and what they are doing. Describe only what is visible; do not "
+        "guess names or relationships.")
+
     def _generate_description(self, image: Image.Image) -> str:
-        """Generate natural language description using BLIP."""
+        """Generate natural language description via the Ollama vision model."""
         try:
-            inputs = self.blip_processor(image, return_tensors="pt")
+            buf = io.BytesIO()
+            image.convert("RGB").save(buf, format="JPEG", quality=90)
+            image_b64 = base64.b64encode(buf.getvalue()).decode()
 
-            if self.use_gpu and torch.cuda.is_available():
-                inputs = {k: v.cuda() for k, v in inputs.items()}
-
-            with torch.no_grad():
-                out = self.blip_model.generate(**inputs, max_length=50)
-
-            description = self.blip_processor.decode(out[0], skip_special_tokens=True)
-            return description
+            payload = {
+                "model": self.vision_model,
+                "prompt": self._CAPTION_PROMPT,
+                "images": [image_b64],
+                "stream": False,
+                "think": False,
+                "options": {"temperature": 0.0, "num_predict": 350}
+            }
+            response = requests.post(f"{self.ollama_url}/api/generate", json=payload, timeout=600)
+            response.raise_for_status()
+            return response.json().get("response", "").strip()
 
         except Exception as e:
             self.logger.error(f"Error generating description: {e}")
@@ -427,12 +436,21 @@ class ContentAnalyzer:
         scene_counts = Counter(all_scenes)
         activity_counts = Counter(all_activities)
 
+        # Representative vision-model captions - unique, non-empty, in analysis order.
+        # These carry scene understanding the tag vocabularies can't express.
+        sample_captions = []
+        for analysis in analyses.values():
+            description = (analysis.description or "").strip()
+            if description and description not in sample_captions:
+                sample_captions.append(description)
+
         return {
             "total_photos_analyzed": len(analyses),
             "average_confidence": total_confidence / len(analyses),
             "top_objects": object_counts.most_common(10),
             "top_scenes": scene_counts.most_common(5),
             "top_activities": activity_counts.most_common(5),
+            "sample_captions": sample_captions[:3],
             "unique_objects": len(object_counts),
             "unique_scenes": len(scene_counts),
             "unique_activities": len(activity_counts)
