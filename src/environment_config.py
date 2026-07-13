@@ -121,6 +121,16 @@ class EnvironmentConfig:
         return self.data_dir / "event_naming_cache.json"
 
     @property
+    def caption_model(self) -> str:
+        """Get the Ollama vision model used for per-photo captioning."""
+        return os.getenv('PHOTO_FILTER_CAPTION_MODEL', 'gemma4:26b')
+
+    @property
+    def ollama_url(self) -> str:
+        """Get the Ollama server URL used for local model inference."""
+        return os.getenv('PHOTO_FILTER_OLLAMA_URL', 'http://localhost:11434')
+
+    @property
     def log_level(self) -> str:
         """Get appropriate log level for environment."""
         if self.is_test:
@@ -158,3 +168,11 @@ def get_event_naming_cache_file() -> Path:
 def is_test_environment() -> bool:
     """Check if running in test environment."""
     return config.is_test
+
+def get_caption_model() -> str:
+    """Get the Ollama vision model used for per-photo captioning."""
+    return config.caption_model
+
+def get_ollama_url() -> str:
+    """Get the Ollama server URL used for local model inference."""
+    return config.ollama_url

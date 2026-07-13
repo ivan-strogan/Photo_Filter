@@ -533,6 +533,20 @@ class EventNamer:
                 return obj.get(attr, default)
             return default
 
+        # GPS spread across the cluster - distinguishes a single-venue event
+        # from a multi-location day or trip (issue #72)
+        gps_coords = cluster_data.get('gps_coordinates') or []
+        gps_spread_km = None
+        if len(gps_coords) >= 2:
+            lat_km = (max(c[0] for c in gps_coords) - min(c[0] for c in gps_coords)) * 111.0
+            lon_km = (max(c[1] for c in gps_coords) - min(c[1] for c in gps_coords)) * 68.0
+            gps_spread_km = max(lat_km, lon_km)
+
+        # Neighbourhood/suburb from the reverse-geocode raw data when present
+        raw_geo = safe_get_location_attr(location_info, 'raw_data', {}) or {}
+        geo_address = raw_geo.get('address', {}) if isinstance(raw_geo, dict) else {}
+        area = geo_address.get('suburb') or geo_address.get('neighbourhood') or ''
+
         location_context = {
             'has_gps': bool(safe_get_location_attr(location_info, 'latitude')) or bool(cluster_data.get('gps_coordinates')),
             'city': safe_get_location_attr(location_info, 'city') or self._extract_city_from_location_string(dominant_location),
@@ -540,20 +554,26 @@ class EventNamer:
             'country': safe_get_location_attr(location_info, 'country'),
             'venue_type': self._classify_venue_type(location_info),
             'location_nickname': self._get_location_nickname(location_info) or self._extract_city_from_location_string(dominant_location),
-            'full_location': dominant_location
+            'full_location': dominant_location,
+            'area': area,
+            'gps_spread_km': gps_spread_km
         }
 
-        # Content context - handle both content_analysis and direct content_tags
+        # Content context - handle both content_analysis and direct content_tags.
+        # content_tags are OBJECT tags, so they may only stand in for objects -
+        # falling back to them for scenes/activities put objects in the
+        # activities field ("Activities: person, phone", issue #72).
         content_tags = cluster_data.get('content_tags', [])
 
         content_context = {
             'objects': content_analysis.get('top_objects', []) or content_tags,
-            'scenes': content_analysis.get('top_scenes', []) or content_tags,
-            'activities': content_analysis.get('top_activities', []) or content_tags,
+            'scenes': content_analysis.get('top_scenes', []),
+            'activities': content_analysis.get('top_activities', []),
             'confidence': content_analysis.get('average_confidence', 0.0),
             'primary_activity': self._identify_primary_activity(content_analysis) or self._identify_activity_from_tags(content_tags),
             'event_type': self._classify_event_type(content_analysis, temporal_context) or self._classify_event_from_tags(content_tags),
-            'content_tags': content_tags
+            'content_tags': content_tags,
+            'sample_captions': content_analysis.get('sample_captions', [])
         }
 
         # Media context
@@ -565,9 +585,12 @@ class EventNamer:
             'capture_pattern': self._analyze_capture_pattern(files)
         }
 
-        # People context - extract face recognition and people information
+        # People context - extract face recognition and people information.
+        # total_faces_detected is often unpopulated; never report fewer faces
+        # than identified people (the "Face count: 0" contradiction, issue #72)
         people_detected = cluster_data.get('people_detected', [])
-        face_count = cluster_data.get('metadata', {}).get('total_faces_detected', 0)
+        face_count = max(cluster_data.get('metadata', {}).get('total_faces_detected', 0),
+                         len(people_detected))
         people_consistency = cluster_data.get('metadata', {}).get('people_consistency_score', 0.0)
 
         people_context = {

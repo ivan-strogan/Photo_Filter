@@ -13,7 +13,7 @@ from src.media_detector import MediaDetector
 
 @pytest.mark.unit
 def test_model_initialization():
-    """Test that CLIP and BLIP models initialize correctly.
+    """Test that CLIP initializes correctly and the vision model is configured.
 
     Verifies lazy loading pattern and successful model initialization.
     Related to Issue #20 - ensures models load without errors.
@@ -22,9 +22,12 @@ def test_model_initialization():
 
     # Models should be None before initialization (lazy loading)
     assert analyzer.clip_model is None
-    assert analyzer.blip_model is None
     assert analyzer.clip_processor is None
-    assert analyzer.blip_processor is None
+
+    # Vision captioning is a live Ollama call, not a locally-loaded model -
+    # verify it's configured (from constructor arg or PHOTO_FILTER_CAPTION_MODEL)
+    assert analyzer.vision_model
+    assert analyzer.ollama_url
 
     # Initialize models
     result = analyzer._initialize_models()
@@ -32,11 +35,68 @@ def test_model_initialization():
     # Verify successful initialization
     assert result is True
     assert analyzer.clip_model is not None
-    assert analyzer.blip_model is not None
     assert analyzer.clip_processor is not None
-    assert analyzer.blip_processor is not None
 
     analyzer.cleanup()
+
+
+@pytest.mark.unit
+def test_vision_model_configurable():
+    """Test that vision_model/ollama_url can be overridden per-instance.
+
+    Related to Issue #67/#72 - the captioner is swappable via constructor args
+    or PHOTO_FILTER_CAPTION_MODEL/PHOTO_FILTER_OLLAMA_URL env vars.
+    """
+    analyzer = ContentAnalyzer(use_gpu=False, vision_model="test-model:1b",
+                               ollama_url="http://example.invalid:11434")
+    assert analyzer.vision_model == "test-model:1b"
+    assert analyzer.ollama_url == "http://example.invalid:11434"
+
+
+@pytest.mark.unit
+def test_generate_description_calls_ollama():
+    """Test that _generate_description posts to Ollama with the expected payload.
+
+    No real network call - mocks requests.post like the EventNamer unit tests do.
+    """
+    from unittest.mock import Mock, patch
+    from PIL import Image as PILImage
+
+    analyzer = ContentAnalyzer(use_gpu=False, vision_model="test-model:1b")
+    image = PILImage.new("RGB", (10, 10))
+
+    with patch("src.content_analyzer.requests.post") as mock_post:
+        mock_response = Mock()
+        mock_response.raise_for_status = Mock()
+        mock_response.json.return_value = {"response": "A test description."}
+        mock_post.return_value = mock_response
+
+        description = analyzer._generate_description(image)
+
+    assert description == "A test description."
+    assert mock_post.called
+    _, kwargs = mock_post.call_args
+    payload = kwargs["json"]
+    assert payload["model"] == "test-model:1b"
+    assert payload["think"] is False
+    assert payload["options"]["temperature"] == 0.0
+    assert payload["options"]["num_predict"] == 350
+    assert len(payload["images"]) == 1
+
+
+@pytest.mark.unit
+def test_generate_description_handles_ollama_failure():
+    """Test that a failed Ollama call degrades gracefully per-photo instead of crashing."""
+    from unittest.mock import patch
+    from PIL import Image as PILImage
+
+    analyzer = ContentAnalyzer(use_gpu=False)
+    image = PILImage.new("RGB", (10, 10))
+
+    with patch("src.content_analyzer.requests.post", side_effect=ConnectionError("no route")):
+        description = analyzer._generate_description(image)
+
+    assert description == "Unable to generate description"
 
 
 @pytest.mark.integration
@@ -70,7 +130,7 @@ def test_photo_analysis():
     assert isinstance(analysis.activities, list)
     assert isinstance(analysis.confidence_score, float)
     assert 0.0 <= analysis.confidence_score <= 1.0
-    assert "CLIP+BLIP" in analysis.analysis_model
+    assert analysis.analysis_model.startswith("CLIP+")
 
     analyzer.cleanup()
 
@@ -107,7 +167,7 @@ def test_photo_analysis_no_faces():
     assert len(analysis.people_detected) == 0, "Should not identify any people"
 
     # Verify using AI models
-    assert "CLIP+BLIP" in analysis.analysis_model
+    assert analysis.analysis_model.startswith("CLIP+")
 
     analyzer.cleanup()
 
@@ -128,7 +188,7 @@ def test_photo_analysis_accuracy_woman_photo():
     - High confidence (>0.5) since photo is clear
 
     Note: AI models may not be perfect. This test may fail if models are updated
-    or if the photo is challenging for CLIP/BLIP.
+    or if the photo is challenging for CLIP/the vision model.
     """
     test_photo = Path("tests/artifacts/photos/Woman_Photo_1.jpeg")
     if not test_photo.exists():
