@@ -13,29 +13,17 @@ from src.media_detector import MediaDetector
 
 @pytest.mark.unit
 def test_model_initialization():
-    """Test that CLIP initializes correctly and the vision model is configured.
+    """Test that the vision model and Ollama URL are configured on construction.
 
-    Verifies lazy loading pattern and successful model initialization.
-    Related to Issue #20 - ensures models load without errors.
+    Vision captioning is a live Ollama HTTP call, not a locally-loaded model -
+    there is nothing to lazy-load. Related to Issue #20 - ensures the analyzer
+    is usable without errors.
     """
     analyzer = ContentAnalyzer(use_gpu=False)
 
-    # Models should be None before initialization (lazy loading)
-    assert analyzer.clip_model is None
-    assert analyzer.clip_processor is None
-
-    # Vision captioning is a live Ollama call, not a locally-loaded model -
-    # verify it's configured (from constructor arg or PHOTO_FILTER_CAPTION_MODEL)
+    # Verify configured (from constructor arg or PHOTO_FILTER_CAPTION_MODEL/PHOTO_FILTER_OLLAMA_URL)
     assert analyzer.vision_model
     assert analyzer.ollama_url
-
-    # Initialize models
-    result = analyzer._initialize_models()
-
-    # Verify successful initialization
-    assert result is True
-    assert analyzer.clip_model is not None
-    assert analyzer.clip_processor is not None
 
     analyzer.cleanup()
 
@@ -125,12 +113,9 @@ def test_photo_analysis():
     assert analysis is not None
     assert isinstance(analysis.description, str)
     assert len(analysis.description) > 0
-    assert isinstance(analysis.objects, list)
-    assert isinstance(analysis.scenes, list)
-    assert isinstance(analysis.activities, list)
     assert isinstance(analysis.confidence_score, float)
     assert 0.0 <= analysis.confidence_score <= 1.0
-    assert analysis.analysis_model.startswith("CLIP+")
+    assert analysis.analysis_model.startswith(analyzer.vision_model)
 
     analyzer.cleanup()
 
@@ -159,15 +144,13 @@ def test_photo_analysis_no_faces():
     assert analysis is not None
     assert len(analysis.description) > 0
     assert analysis.description != "Unable to generate description"
-    assert isinstance(analysis.objects, list)
-    assert isinstance(analysis.scenes, list)
 
     # Verify face detection ran and found no faces (verifiable fact)
     assert analysis.face_count == 0, "Should not detect faces in no_faces_photo1.jpg"
     assert len(analysis.people_detected) == 0, "Should not identify any people"
 
-    # Verify using AI models
-    assert analysis.analysis_model.startswith("CLIP+")
+    # Verify using the vision model
+    assert analysis.analysis_model.startswith(analyzer.vision_model)
 
     analyzer.cleanup()
 
@@ -183,12 +166,10 @@ def test_photo_analysis_accuracy_woman_photo():
 
     Expected AI results:
     - Description should mention "woman" or "person" or "face"
-    - Objects: should detect "person"
-    - Scenes: should detect reasonable scene types
-    - High confidence (>0.5) since photo is clear
+    - High confidence (>0.5) since captioning should succeed on a clear photo
 
-    Note: AI models may not be perfect. This test may fail if models are updated
-    or if the photo is challenging for CLIP/the vision model.
+    Note: AI models may not be perfect. This test may fail if the vision model
+    is updated or the photo is challenging to caption.
     """
     test_photo = Path("tests/artifacts/photos/Woman_Photo_1.jpeg")
     if not test_photo.exists():
@@ -199,20 +180,12 @@ def test_photo_analysis_accuracy_woman_photo():
 
     assert analysis is not None
     print(f"\nDescription: {analysis.description}")
-    print(f"Objects detected: {analysis.objects}")
-    print(f"Scenes detected: {analysis.scenes}")
     print(f"Confidence: {analysis.confidence_score:.2f}")
 
     # Verify description mentions relevant content
     description_lower = analysis.description.lower()
     has_person_reference = any(keyword in description_lower for keyword in ["woman", "person", "girl", "lady", "face"])
     assert has_person_reference, f"Description should mention woman/person/face, got: {analysis.description}"
-
-    # For a clear photo of a person, should detect 'person' object
-    assert "person" in analysis.objects, f"Should detect 'person' in objects, got: {analysis.objects}"
-
-    # Should detect at least one scene type
-    assert len(analysis.scenes) > 0, "Should detect at least one scene type"
 
     # Clear photo should have good confidence
     assert analysis.confidence_score > 0.5, f"Clear photo should have high confidence, got: {analysis.confidence_score:.2f}"
@@ -395,9 +368,7 @@ def test_content_analyzer_legacy():
                 print(f"  Model: {analysis.analysis_model}")
                 print(f"  Confidence: {analysis.confidence_score:.2f}")
                 print(f"  Description: {analysis.description}")
-                print(f"  Objects: {', '.join(analysis.objects) if analysis.objects else 'None detected'}")
-                print(f"  Scenes: {', '.join(analysis.scenes) if analysis.scenes else 'None detected'}")
-                print(f"  Activities: {', '.join(analysis.activities) if analysis.activities else 'None detected'}")
+                print(f"  People detected: {', '.join(analysis.people_detected) if analysis.people_detected else 'None'}")
             else:
                 print(f"❌ Analysis failed")
 
@@ -415,16 +386,7 @@ def test_content_analyzer_legacy():
             print(f"\n📊 Content Summary:")
             print(f"  Photos analyzed: {summary['total_photos_analyzed']}")
             print(f"  Average confidence: {summary['average_confidence']:.3f}")
-            print(f"  Unique objects: {summary['unique_objects']}")
-            print(f"  Unique scenes: {summary['unique_scenes']}")
-            print(f"  Unique activities: {summary['unique_activities']}")
-
-            if summary['top_objects']:
-                print(f"  Top objects: {', '.join([obj for obj, count in summary['top_objects'][:3]])}")
-            if summary['top_scenes']:
-                print(f"  Top scenes: {', '.join([scene for scene, count in summary['top_scenes'][:3]])}")
-            if summary['top_activities']:
-                print(f"  Top activities: {', '.join([activity for activity, count in summary['top_activities'][:3]])}")
+            print(f"  Sample captions: {len(summary['sample_captions'])}")
 
         # Test cache functionality
         print(f"\n💾 Testing cache functionality...")
@@ -446,30 +408,16 @@ def test_content_analyzer_legacy():
             cache_file.unlink()
             print(f"  Test cache file cleaned up")
 
-        # Test with ML models if available
-        print(f"\n🤖 Testing ML model availability...")
-
-        try:
-            import torch
-            from transformers import CLIPModel
-            print(f"  ✅ PyTorch available: {torch.__version__}")
-            print(f"  ✅ Transformers available")
-
-            # Test GPU availability
-            if torch.cuda.is_available():
-                print(f"  ✅ CUDA GPU available: {torch.cuda.get_device_name()}")
-            elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
-                print(f"  ✅ Apple MPS available")
-            else:
-                print(f"  ℹ️  CPU only (no GPU acceleration)")
-
-            # Note about model initialization
-            print(f"\n💡 Note: ML models are lazy-loaded on first use")
-            print(f"   This test initializes ContentAnalyzer but doesn't analyze photos to save time")
-
-        except ImportError as e:
-            print(f"  ❌ ML dependencies not available: {e}")
-            print(f"  💡 Install with: pip install torch transformers")
+        # Check that the Ollama vision model is reachable
+        print(f"\n🤖 Testing Ollama availability...")
+        from src.content_analyzer import OLLAMA_AVAILABLE
+        if OLLAMA_AVAILABLE:
+            print(f"  ✅ requests library available for Ollama HTTP calls")
+            print(f"  Vision model: {analyzer.vision_model}")
+            print(f"  Ollama URL: {analyzer.ollama_url}")
+        else:
+            print(f"  ❌ requests library not available")
+            print(f"  💡 Install with: pip install requests")
 
         print(f"\n✅ Content analyzer testing completed!")
 
