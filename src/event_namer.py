@@ -787,6 +787,54 @@ class EventNamer:
         location = context['location']
         content = context['content']
         media = context['media']
+        people = context['people']
+
+        # Location spread: a multi-town trip and an afternoon at one cafe
+        # both show up as "GPS available: Yes" without this (issue #72)
+        gps_spread_km = location.get('gps_spread_km')
+        if gps_spread_km is not None and gps_spread_km >= 2.0:
+            location_spread = f"Multi-location ({gps_spread_km:.1f} km spread across the cluster)"
+        elif location.get('has_gps'):
+            location_spread = "Single venue"
+        else:
+            location_spread = "Unknown"
+        area = location.get('area') or ''
+        area_line = f"\n- Area: {area}" if area else ""
+
+        # Representative photo descriptions from the vision model - the
+        # richest signal available, previously generated then discarded
+        sample_captions = content.get('sample_captions') or []
+        captions_block = ""
+        if sample_captions:
+            caption_lines = "\n".join(f'- "{c}"' for c in sample_captions[:3])
+            captions_block = f"\n\n**Photo Descriptions:**\n{caption_lines}"
+
+        # People usage guidance - people show up in context but nothing
+        # previously told the LLM it's allowed to name events after them
+        people_guidance = ""
+        if people['has_people'] and people['people_count'] <= 4:
+            people_guidance = (f"\n- {people['main_people']} appears in this event; if the event "
+                               f"centers on them, use their name (e.g. \"{people['main_people']}'s Birthday\")")
+
+        # Similar past events from the organized library - the pattern-
+        # matching signal that #67 found was computed but never sent
+        similarity = context.get('similarity') or {}
+        similarity_block = ""
+        if similarity.get('enabled') and similarity.get('similar_photos'):
+            best_per_folder: Dict[str, float] = {}
+            for match in similarity['similar_photos']:
+                folder = match.get('event_folder')
+                score = match.get('similarity', 0.0)
+                if folder and score > best_per_folder.get(folder, -1.0):
+                    best_per_folder[folder] = score
+            top_matches = sorted(best_per_folder.items(), key=lambda kv: kv[1], reverse=True)[:5]
+            if top_matches:
+                match_lines = "\n".join(f"- {folder} (similarity: {score:.2f})" for folder, score in top_matches)
+                similarity_block = (
+                    "\n\n**Similar Past Events (use as naming guidance):**\n"
+                    f"{match_lines}\n"
+                    "- If these share a clear naming pattern, follow it for consistency"
+                )
 
         prompt = f"""Create a descriptive folder name for a photo event with this information:
 
@@ -802,22 +850,23 @@ class EventNamer:
 - City: {location['city'] or 'Unknown'}
 - Venue type: {location['venue_type']}
 - GPS available: {'Yes' if location['has_gps'] else 'No'}
+- Location spread: {location_spread}{area_line}
 
 **Content Analysis:**
 - Activities: {', '.join([item[0] if isinstance(item, tuple) else str(item) for item in content['activities'][:3]]) if content['activities'] else 'None detected'}
 - Scenes: {', '.join([item[0] if isinstance(item, tuple) else str(item) for item in content['scenes'][:3]]) if content['scenes'] else 'None detected'}
 - Objects: {', '.join([item[0] if isinstance(item, tuple) else str(item) for item in content['objects'][:3]]) if content['objects'] else 'None detected'}
-- Event type: {content['event_type']}
+- Event type: {content['event_type']}{captions_block}
 
 **People Detected:**
-- People: {context['people']['main_people'] if context['people']['has_people'] else 'None identified'}
-- People count: {context['people']['people_count']}
-- Face count: {context['people']['face_count']}
-- Category: {context['people']['people_category']}
+- People: {people['main_people'] if people['has_people'] else 'None identified'}
+- People count: {people['people_count']}
+- Face count: {people['face_count']}
+- Category: {people['people_category']}{people_guidance}
 
 **Media:**
 - Total files: {media['total_files']}
-- Photos: {media['photo_count']}, Videos: {media['video_count']}
+- Photos: {media['photo_count']}, Videos: {media['video_count']}{similarity_block}
 
 **Format Requirements:**
 - Start with date: YYYY_MM_DD
@@ -831,20 +880,20 @@ class EventNamer:
 - ONLY use the provided location: {location['city'] or 'Unknown'}
 - DO NOT invent or change the location - use EXACTLY what is provided
 - Be specific and descriptive, avoid generic terms like "Photoshoot", "Event Name", "Outing"
+- Prefer the photo descriptions and people above over generic season/time labels
 - Consider the season and weather for the location
 - If no specific activity detected, use time/duration/setting context
 
 **Examples for Edmonton (winter city):**
-- 2024_01_15 - Indoor Family Gathering - Edmonton
-- 2024_07_20 - Summer Festival - Edmonton
-- 2024_11_10 - Autumn Photography Session - Edmonton
+- 2024_01_15 - Sarah's Birthday Dinner - Edmonton
+- 2024_07_20 - Canada Day Festival - Edmonton
 - 2024_12_25 - Christmas Morning - Home
-- 2024_06_15 - Outdoor Concert - Edmonton
-- 2024_03_20 - Spring Garden Visit - Edmonton
+- 2024_03_08 - Foosball Night with Friends - Edmonton
 
 **Examples for other locations:**
-- 2024_08_10 - Beach Day - Vancouver
+- 2024_08_10 - Beach Day with Mike - Vancouver
 - 2024_09_05 - Mountain Hiking - Calgary
+- 2023_01_15 - Elena's Birthday - Toronto
 
 **CRITICAL OUTPUT INSTRUCTION:**
 Generate ONLY the folder name using the EXACT location provided above.
