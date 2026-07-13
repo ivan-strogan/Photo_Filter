@@ -4,17 +4,17 @@ An intelligent photo organization system that automatically clusters and organiz
 
 ## Features
 
-- 📸 **Smart Photo Detection**: Recognizes iPhone photo/video naming format (IMG_YYYYMMDD_HHMMSS.JPG/.MOV)
-- 🕒 **Temporal Clustering**: Groups media by time proximity with intelligent algorithms
-- 📍 **Location-Based Grouping**: Uses GPS metadata and reverse geocoding for location clustering
-- 🤖 **Computer Vision Analysis**: Analyzes photo content for objects, scenes, and activities
-- 🧠 **Vector Database**: Uses CLIP embeddings for visual similarity matching with intelligent caching
-- 🎬 **Video Processing**: Intelligent frame extraction and vectorization for video files
-- 🤖 **Smart Learning**: Learns from existing organized photos to improve future naming
-- ⚡ **Duplicate Detection**: Skips already-processed photos for lightning-fast subsequent runs
-- ⚙️ **Configurable Parameters**: Customizable clustering thresholds and processing settings
-- 🚀 **GPU Acceleration**: Supports CUDA and Apple MPS for faster processing
-- 📊 **Comprehensive Logging**: Detailed progress tracking and session reports
+- **Smart Photo Detection**: Recognizes iPhone photo/video naming format (IMG_YYYYMMDD_HHMMSS.JPG/.MOV)
+- **Temporal Clustering**: Groups media by time proximity with intelligent algorithms
+- **Location-Based Grouping**: Uses GPS metadata and reverse geocoding for location clustering
+- **Computer Vision Analysis**: Analyzes photo content for objects, scenes, and activities
+- **Vector Database**: Uses CLIP embeddings for visual similarity matching with intelligent caching
+- **Video Processing**: Intelligent frame extraction and vectorization for video files
+- **Smart Learning**: Learns from existing organized photos to improve future naming
+- **Duplicate Detection**: Skips already-processed photos for lightning-fast subsequent runs
+- **Configurable Parameters**: Customizable clustering thresholds and processing settings
+- **GPU Acceleration**: Supports CUDA and Apple MPS for faster processing
+- **Comprehensive Logging**: Detailed progress tracking and session reports
 
 ## Project Structure
 
@@ -336,25 +336,25 @@ pytest tests/
 
 **Completed Features (18/24):**
 
-- ✅ Media detection and parsing
-- ✅ Metadata extraction (photos & videos)
-- ✅ Temporal clustering algorithms
-- ✅ Location-based clustering
-- ✅ Computer vision content analysis
-- ✅ Vector database integration
-- ✅ Configuration management
-- ✅ CLI interface
-- ✅ Face detection and recognition
+- Media detection and parsing
+- Metadata extraction (photos & videos)
+- Temporal clustering algorithms
+- Location-based clustering
+- Computer vision content analysis
+- Vector database integration
+- Configuration management
+- CLI interface
+- Face detection and recognition
 
 **In Progress:**
 
-- ⚠️ LLM integration for intelligent event naming
+- LLM integration for intelligent event naming
 
 **Remaining Features:**
 
-- 🔄 Video content analysis
-- 🔄 Automated folder creation
-- 🔄 Media moving/copying system
+- Video content analysis
+- Automated folder creation
+- Media moving/copying system
 
 ## Dependencies
 
