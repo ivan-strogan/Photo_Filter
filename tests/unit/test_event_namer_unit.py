@@ -670,6 +670,142 @@ def test_issue_62_event_naming_flow_completes(mock_event_namer, mock_context_edm
     print("✅ REGRESSION TEST PASSED: Issue #62 event naming flow completes")
 
 
+# ===== UNIT TESTS FOR ISSUE #67 (SIMILAR PAST EVENTS) =====
+
+@pytest.mark.unit
+def test_similarity_section_included_when_populated(mock_event_namer, mock_context_edmonton):
+    """Prompt includes past event names when similarity context has matches (Issue #67)."""
+    import copy
+    context = copy.deepcopy(mock_context_edmonton)
+    context['similarity'] = {
+        'enabled': True,
+        'similar_photos': [
+            {'event_folder': "2023_01_15 - Elena's Birthday", 'similarity': 0.91},
+            {'event_folder': "2022_01_14 - Elena's Birthday", 'similarity': 0.87},
+        ]
+    }
+
+    prompt = mock_event_namer._build_naming_prompt(context)
+
+    assert 'Similar Past Events' in prompt
+    assert "2023_01_15 - Elena's Birthday" in prompt
+    assert '0.91' in prompt
+
+
+@pytest.mark.unit
+def test_similarity_section_omitted_when_empty(mock_event_namer, mock_context_edmonton):
+    """Prompt omits the similarity section cleanly when no context is provided (Issue #67)."""
+    # mock_context_edmonton has no 'similarity' key at all
+    prompt = mock_event_namer._build_naming_prompt(mock_context_edmonton)
+    assert 'Similar Past Events' not in prompt
+
+
+@pytest.mark.unit
+def test_similarity_section_omitted_when_disabled_or_no_matches(mock_event_namer, mock_context_edmonton):
+    """Prompt omits the similarity section when enabled but no similar photos were found (Issue #67)."""
+    import copy
+    context = copy.deepcopy(mock_context_edmonton)
+    context['similarity'] = {'enabled': True, 'similar_photos': []}
+
+    prompt = mock_event_namer._build_naming_prompt(context)
+    assert 'Similar Past Events' not in prompt
+
+
+@pytest.mark.unit
+def test_similarity_section_dedupes_and_caps_at_five(mock_event_namer, mock_context_edmonton):
+    """Repeated folders collapse to their best score, and the list is capped at 5 (Issue #67)."""
+    import copy
+    context = copy.deepcopy(mock_context_edmonton)
+    context['similarity'] = {
+        'enabled': True,
+        'similar_photos': [
+            {'event_folder': 'Folder A', 'similarity': 0.5},
+            {'event_folder': 'Folder A', 'similarity': 0.8},  # same folder, higher score should win
+            {'event_folder': 'Folder B', 'similarity': 0.7},
+            {'event_folder': 'Folder C', 'similarity': 0.6},
+            {'event_folder': 'Folder D', 'similarity': 0.4},
+            {'event_folder': 'Folder E', 'similarity': 0.3},
+            {'event_folder': 'Folder F', 'similarity': 0.2},
+        ]
+    }
+
+    prompt = mock_event_namer._build_naming_prompt(context)
+
+    assert 'Folder A (similarity: 0.80)' in prompt
+    assert 'Folder A (similarity: 0.50)' not in prompt
+    assert 'Folder F' not in prompt, "Should cap at the top 5 matches"
+
+
+# ===== UNIT TESTS FOR ISSUE #72 (RICHER PROMPT CONTEXT) =====
+
+@pytest.mark.unit
+def test_location_spread_multi_location(mock_event_namer, mock_context_edmonton):
+    """A wide GPS spread is labeled multi-location instead of just 'GPS available: Yes' (Issue #72)."""
+    import copy
+    context = copy.deepcopy(mock_context_edmonton)
+    context['location']['gps_spread_km'] = 45.2
+
+    prompt = mock_event_namer._build_naming_prompt(context)
+    assert 'Multi-location' in prompt
+    assert '45.2 km' in prompt
+
+
+@pytest.mark.unit
+def test_location_spread_single_venue(mock_event_namer, mock_context_edmonton):
+    """A cluster with GPS but no meaningful spread is labeled a single venue (Issue #72)."""
+    prompt = mock_event_namer._build_naming_prompt(mock_context_edmonton)
+    assert 'Single venue' in prompt
+
+
+@pytest.mark.unit
+def test_sample_captions_included_in_prompt(mock_event_namer, mock_context_edmonton):
+    """Representative vision-model captions are surfaced in the prompt (Issue #72)."""
+    import copy
+    context = copy.deepcopy(mock_context_edmonton)
+    context['content']['sample_captions'] = [
+        'A man kneels by a decorated Christmas tree holding a wrapped gift.'
+    ]
+
+    prompt = mock_event_namer._build_naming_prompt(context)
+    assert 'Photo Descriptions' in prompt
+    assert 'A man kneels by a decorated Christmas tree holding a wrapped gift.' in prompt
+
+
+@pytest.mark.unit
+def test_sample_captions_omitted_when_empty(mock_event_namer, mock_context_edmonton):
+    """No Photo Descriptions section is added when there are no captions (Issue #72)."""
+    prompt = mock_event_namer._build_naming_prompt(mock_context_edmonton)
+    assert 'Photo Descriptions' not in prompt
+
+
+@pytest.mark.unit
+def test_people_guidance_included_for_small_group(mock_event_namer, mock_context_edmonton):
+    """The prompt explicitly permits using a person's name for small, identified groups (Issue #72)."""
+    import copy
+    context = copy.deepcopy(mock_context_edmonton)
+    context['people']['has_people'] = True
+    context['people']['people_count'] = 1
+    context['people']['main_people'] = 'Test Person'
+
+    prompt = mock_event_namer._build_naming_prompt(context)
+    assert 'Test Person' in prompt
+    assert 'use their name' in prompt
+
+
+@pytest.mark.unit
+def test_people_guidance_omitted_when_no_people(mock_event_namer, mock_context_edmonton):
+    """No people-naming guidance is added when nobody was identified (Issue #72)."""
+    prompt = mock_event_namer._build_naming_prompt(mock_context_edmonton)
+    assert 'use their name' not in prompt
+
+
+@pytest.mark.unit
+def test_examples_are_not_uniformly_seasonal_generic(mock_event_namer, mock_context_edmonton):
+    """The example list mixes in people/content-driven names, not just <Season> <Generic> (Issue #72)."""
+    prompt = mock_event_namer._build_naming_prompt(mock_context_edmonton)
+    assert "Sarah's Birthday Dinner" in prompt or "Elena's Birthday" in prompt
+
+
 if __name__ == "__main__":
     """Run the event namer unit tests standalone."""
     print("🧪 Event Namer Unit Tests")
