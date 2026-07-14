@@ -71,7 +71,7 @@ class EventNamer:
     """
 
     def __init__(self, api_key: Optional[str] = None, enable_llm: bool = True,
-                 ollama_model: str = "llama3.1:8b", ollama_url: str = "http://localhost:11434",
+                 ollama_model: Optional[str] = None, ollama_url: str = "http://localhost:11434",
                  vector_db: Optional[Any] = None, photo_vectorizer: Optional[Any] = None,
                  home_city: Optional[str] = None, home_state: Optional[str] = None):
         """
@@ -80,7 +80,8 @@ class EventNamer:
         Args:
             api_key: OpenAI API key (optional, can use environment variable)
             enable_llm: Whether to use LLM for naming (fallback to rule-based)
-            ollama_model: Local Ollama model to use (e.g., "llama3.1:8b", "phi3:mini")
+            ollama_model: Local Ollama model to use (default: PHOTO_FILTER_NAMING_MODEL
+                env var, e.g. "llama3.1:8b", "gemma3:12b")
             ollama_url: Ollama server URL (default: localhost)
             vector_db: Vector database instance for finding similar organized photos
             photo_vectorizer: Photo vectorizer for creating embeddings
@@ -105,7 +106,6 @@ class EventNamer:
         # Only use OpenAI if we have an API key
         self.use_openai = enable_llm and OPENAI_AVAILABLE and api_key is not None
         self.use_ollama = enable_llm and OLLAMA_AVAILABLE
-        self.ollama_model = ollama_model
         self.ollama_url = ollama_url
 
         # LLM clients (initialized lazily)
@@ -117,14 +117,17 @@ class EventNamer:
 
         # Use environment-aware cache file path
         try:
-            from .environment_config import get_event_naming_cache_file, get_home_city, get_home_state
+            from .environment_config import (get_event_naming_cache_file, get_home_city,
+                                              get_home_state, get_naming_model)
         except ImportError:
-            from environment_config import get_event_naming_cache_file, get_home_city, get_home_state
+            from environment_config import (get_event_naming_cache_file, get_home_city,
+                                             get_home_state, get_naming_model)
 
         self.cache_file = get_event_naming_cache_file()
         self._load_cache()
         self.home_city = home_city or get_home_city()
         self.home_state = home_state or get_home_state()
+        self.ollama_model = ollama_model or get_naming_model()
 
         # Vector database for finding similar organized photos
         self.vector_db = vector_db

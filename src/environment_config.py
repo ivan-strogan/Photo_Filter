@@ -126,6 +126,11 @@ class EnvironmentConfig:
         return os.getenv('PHOTO_FILTER_CAPTION_MODEL', 'gemma4:26b')
 
     @property
+    def naming_model(self) -> str:
+        """Get the Ollama model used for folder-name generation."""
+        return os.getenv('PHOTO_FILTER_NAMING_MODEL', 'llama3.1:8b')
+
+    @property
     def ollama_url(self) -> str:
         """Get the Ollama server URL used for local model inference."""
         return os.getenv('PHOTO_FILTER_OLLAMA_URL', 'http://localhost:11434')
@@ -184,6 +189,10 @@ def is_test_environment() -> bool:
 def get_caption_model() -> str:
     """Get the Ollama vision model used for per-photo captioning."""
     return config.caption_model
+
+def get_naming_model() -> str:
+    """Get the Ollama model used for folder-name generation."""
+    return config.naming_model
 
 def get_ollama_url() -> str:
     """Get the Ollama server URL used for local model inference."""
