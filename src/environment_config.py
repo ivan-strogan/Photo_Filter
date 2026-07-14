@@ -131,6 +131,18 @@ class EnvironmentConfig:
         return os.getenv('PHOTO_FILTER_OLLAMA_URL', 'http://localhost:11434')
 
     @property
+    def home_city(self) -> str:
+        """Get the user's home city - events there don't need the city stated
+        in the name (it's the default), events elsewhere do."""
+        return os.getenv('PHOTO_FILTER_HOME_CITY', 'Edmonton')
+
+    @property
+    def home_state(self) -> str:
+        """Get the user's home state/province - disambiguates home_city from
+        same-named cities elsewhere (e.g. London, ON vs London, UK)."""
+        return os.getenv('PHOTO_FILTER_HOME_STATE', 'Alberta')
+
+    @property
     def log_level(self) -> str:
         """Get appropriate log level for environment."""
         if self.is_test:
@@ -176,3 +188,11 @@ def get_caption_model() -> str:
 def get_ollama_url() -> str:
     """Get the Ollama server URL used for local model inference."""
     return config.ollama_url
+
+def get_home_city() -> str:
+    """Get the user's home city for naming purposes."""
+    return config.home_city
+
+def get_home_state() -> str:
+    """Get the user's home state/province for naming purposes."""
+    return config.home_state

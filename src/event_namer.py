@@ -72,7 +72,8 @@ class EventNamer:
 
     def __init__(self, api_key: Optional[str] = None, enable_llm: bool = True,
                  ollama_model: str = "llama3.1:8b", ollama_url: str = "http://localhost:11434",
-                 vector_db: Optional[Any] = None, photo_vectorizer: Optional[Any] = None):
+                 vector_db: Optional[Any] = None, photo_vectorizer: Optional[Any] = None,
+                 home_city: Optional[str] = None, home_state: Optional[str] = None):
         """
         Initialize the event namer.
 
@@ -83,6 +84,11 @@ class EventNamer:
             ollama_url: Ollama server URL (default: localhost)
             vector_db: Vector database instance for finding similar organized photos
             photo_vectorizer: Photo vectorizer for creating embeddings
+            home_city: User's home city (default: PHOTO_FILTER_HOME_CITY env var).
+                Events there don't need the city stated in the name; events
+                elsewhere do.
+            home_state: User's home state/province (default: PHOTO_FILTER_HOME_STATE
+                env var). Disambiguates home_city from same-named cities elsewhere.
 
         For junior developers:
         - API keys should never be hardcoded - use environment variables
@@ -111,12 +117,14 @@ class EventNamer:
 
         # Use environment-aware cache file path
         try:
-            from .environment_config import get_event_naming_cache_file
+            from .environment_config import get_event_naming_cache_file, get_home_city, get_home_state
         except ImportError:
-            from environment_config import get_event_naming_cache_file
+            from environment_config import get_event_naming_cache_file, get_home_city, get_home_state
 
         self.cache_file = get_event_naming_cache_file()
         self._load_cache()
+        self.home_city = home_city or get_home_city()
+        self.home_state = home_state or get_home_state()
 
         # Vector database for finding similar organized photos
         self.vector_db = vector_db
@@ -547,12 +555,24 @@ class EventNamer:
         geo_address = raw_geo.get('address', {}) if isinstance(raw_geo, dict) else {}
         area = geo_address.get('suburb') or geo_address.get('neighbourhood') or ''
 
+        # Specific venue name/type from the reverse-geocode raw data (e.g.
+        # "Kingsway Mall" / shop) - only for actual points of interest; roads,
+        # houses and generic buildings get a 'name' from OSM too but aren't
+        # venues (issue #72 - "Shopping Trip to Kingsway Mall" vs just
+        # "Shopping Trip")
+        venue_classes = {'amenity', 'shop', 'tourism', 'leisure'}
+        osm_class = raw_geo.get('class', '') if isinstance(raw_geo, dict) else ''
+        osm_type = raw_geo.get('type', '') if isinstance(raw_geo, dict) else ''
+        venue_name = (raw_geo.get('name') or '') if osm_class in venue_classes else ''
+        venue_type = osm_type.replace('_', ' ') if venue_name else 'unknown'
+
         location_context = {
             'has_gps': bool(safe_get_location_attr(location_info, 'latitude')) or bool(cluster_data.get('gps_coordinates')),
             'city': safe_get_location_attr(location_info, 'city') or self._extract_city_from_location_string(dominant_location),
             'state': safe_get_location_attr(location_info, 'state'),
             'country': safe_get_location_attr(location_info, 'country'),
-            'venue_type': self._classify_venue_type(location_info),
+            'venue_type': venue_type,
+            'venue_name': venue_name,
             'location_nickname': self._get_location_nickname(location_info) or self._extract_city_from_location_string(dominant_location),
             'full_location': dominant_location,
             'area': area,
@@ -801,6 +821,39 @@ class EventNamer:
         area = location.get('area') or ''
         area_line = f"\n- Area: {area}" if area else ""
 
+        # Specific venue name (e.g. "Kingsway Mall") - lets the LLM name an
+        # event after the actual place instead of a generic description
+        # (issue #72 - "Shopping Trip to Kingsway Mall" vs just "Shopping Trip")
+        venue_name = location.get('venue_name') or ''
+        venue_line = f"\n- Venue name: {venue_name}" if venue_name else ""
+
+        # Home vs. away: the real organized library never states the home
+        # city in the name (it's the default - e.g. "La Cite Francophone")
+        # but always names trips elsewhere (e.g. "Mexico Trip") - issue #72
+        city = location.get('city') or ''
+        state = location.get('state') or ''
+        is_home_city = bool(city) and city.strip().lower() == self.home_city.strip().lower() and (
+            not state or not self.home_state or state.strip().lower() == self.home_state.strip().lower()
+        )
+        if not city:
+            location_guidance = "Location is unknown - do not mention a city or place in the name."
+        elif is_home_city:
+            location_guidance = (
+                f"This event is in {self.home_city} (home) - do NOT state the city in the name. "
+                f"Use the venue name above if given, otherwise just describe the event."
+            )
+        elif venue_name:
+            location_guidance = (
+                f"This event is NOT in {self.home_city} (away/trip) - name the location prominently, "
+                f"using the venue name and/or the city, e.g. \"{venue_name} - {city}\" or "
+                f"\"{venue_name} in {city}\"."
+            )
+        else:
+            location_guidance = (
+                f"This event is NOT in {self.home_city} (away/trip) - name the location prominently, "
+                f"e.g. \"{city} Trip\" or work \"{city}\" into the description."
+            )
+
         # Representative photo descriptions from the vision model - the
         # richest signal available, previously generated then discarded
         sample_captions = content.get('sample_captions') or []
@@ -850,7 +903,8 @@ class EventNamer:
 - City: {location['city'] or 'Unknown'}
 - Venue type: {location['venue_type']}
 - GPS available: {'Yes' if location['has_gps'] else 'No'}
-- Location spread: {location_spread}{area_line}
+- Location spread: {location_spread}{area_line}{venue_line}
+- Naming guidance: {location_guidance}
 
 **Content Analysis:**
 - Activities: {', '.join([item[0] if isinstance(item, tuple) else str(item) for item in content['activities'][:3]]) if content['activities'] else 'None detected'}
@@ -871,7 +925,7 @@ class EventNamer:
 **Format Requirements:**
 - Start with date: YYYY_MM_DD
 - Add descriptive event name
-- Add location if known
+- Add the location only if the naming guidance above says to - fold it into the description naturally, don't just append "- City"
 - Keep under 60 characters total
 - Use title case
 - No special characters except hyphens and underscores
@@ -879,21 +933,20 @@ class EventNamer:
 **IMPORTANT CONSTRAINTS:**
 - ONLY use the provided location: {location['city'] or 'Unknown'}
 - DO NOT invent or change the location - use EXACTLY what is provided
+- Follow the location naming guidance above - home city is implicit and should not be stated; away locations should be named
 - Be specific and descriptive, avoid generic terms like "Photoshoot", "Event Name", "Outing"
 - Prefer the photo descriptions and people above over generic season/time labels
 - Consider the season and weather for the location
 - If no specific activity detected, use time/duration/setting context
 
-**Examples for Edmonton (winter city):**
-- 2024_01_15 - Sarah's Birthday Dinner - Edmonton
-- 2024_07_20 - Canada Day Festival - Edmonton
-- 2024_12_25 - Christmas Morning - Home
-- 2024_03_08 - Foosball Night with Friends - Edmonton
-
-**Examples for other locations:**
-- 2024_08_10 - Beach Day with Mike - Vancouver
-- 2024_09_05 - Mountain Hiking - Calgary
-- 2023_01_15 - Elena's Birthday - Toronto
+**Examples (home events have no city; away events name the location):**
+- 2024_01_15 - Sarah's Birthday Dinner
+- 2024_07_20 - Canada Day Festival
+- 2024_12_25 - Christmas Morning
+- 2024_03_08 - Foosball Night with Friends
+- 2024_08_10 - Vancouver Beach Day
+- 2018_02_09 - Mexico Trip
+- 2023_01_15 - Elena's Birthday in Toronto
 
 **CRITICAL OUTPUT INSTRUCTION:**
 Generate ONLY the folder name using the EXACT location provided above.
@@ -1268,11 +1321,6 @@ Output only the folder name now:"""
             (12, 31), # New Year's Eve
         ]
         return (month, day) in holidays
-
-    def _classify_venue_type(self, location_info: Any) -> str:
-        """Classify venue type from location information."""
-        # This would be more sophisticated with full geocoding data
-        return getattr(location_info, 'venue_type', 'unknown')
 
     def _get_location_nickname(self, location_info: Any) -> str:
         """Get friendly nickname for location."""
