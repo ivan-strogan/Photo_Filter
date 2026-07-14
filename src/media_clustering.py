@@ -700,7 +700,8 @@ class MediaClusteringEngine:
                     'content_analysis': cluster.metadata.get('content_analysis', {}),  # From ContentAnalyzer
                     'people_detected': cluster.people_detected,
                     'confidence_score': cluster.confidence_score,
-                    'media_files': cluster.media_files
+                    'media_files': cluster.media_files,
+                    'metadata': cluster.metadata
                 }
 
                 # Generate intelligent event name
