@@ -274,6 +274,63 @@ def test_issue_14_regression_prevention(mock_event_namer, mock_context_edmonton)
     print("✅ REGRESSION TEST PASSED: Issue #14 prevention mechanisms in place")
 
 
+# ===== REGRESSION TESTS FOR ISSUE #74 (VALIDATOR BROKEN BY HOME/AWAY FORMAT) =====
+
+@pytest.mark.unit
+@pytest.mark.regression
+def test_validate_event_name_home_event_without_city_passes(mock_event_namer, mock_context_edmonton):
+    """Home-city event names correctly omit the city (Issue #74)."""
+    assert mock_event_namer._validate_event_name(
+        '2024_01_15 - Christmas Morning', mock_context_edmonton
+    ) is True
+
+
+@pytest.mark.unit
+@pytest.mark.regression
+def test_validate_event_name_away_event_with_correct_city_passes(mock_event_namer, mock_context_edmonton):
+    """Away-event names that fold the correct city into the description pass (Issue #74)."""
+    import copy
+    context = copy.deepcopy(mock_context_edmonton)
+    context['location']['city'] = 'Calgary'
+
+    assert mock_event_namer._validate_event_name(
+        '2024_01_15 - Calgary Trip', context
+    ) is True
+
+
+@pytest.mark.unit
+@pytest.mark.regression
+def test_validate_event_name_rejects_home_city_stated_at_home(mock_event_namer, mock_context_edmonton):
+    """Home-city event names that state the city anyway are rejected (Issue #74)."""
+    assert mock_event_namer._validate_event_name(
+        '2024_01_15 - Christmas Morning - Edmonton', mock_context_edmonton
+    ) is False
+
+
+@pytest.mark.unit
+@pytest.mark.regression
+def test_validate_event_name_rejects_home_city_stated_while_away(mock_event_namer, mock_context_edmonton):
+    """Rejects a name stating the home city while the event is actually elsewhere -
+    the original Issue #14 failure mode (real GPS location replaced with a
+    different one), now detected without relying on a fixed name segment."""
+    import copy
+    context = copy.deepcopy(mock_context_edmonton)
+    context['location']['city'] = 'Calgary'
+
+    assert mock_event_namer._validate_event_name(
+        '2024_01_15 - Weekend in Edmonton', context
+    ) is False
+
+
+@pytest.mark.unit
+@pytest.mark.regression
+def test_validate_event_name_rejects_unknown_when_city_known(mock_event_namer, mock_context_edmonton):
+    """Rejects the 'Unknown' placeholder when a real city was provided (Issue #14)."""
+    assert mock_event_namer._validate_event_name(
+        '2024_01_15 - Test Event - Unknown', mock_context_edmonton
+    ) is False
+
+
 # ===== UNIT TESTS FOR ISSUE #41 FIX (META-TEXT DETECTION) =====
 
 @pytest.mark.unit
@@ -658,8 +715,9 @@ def test_issue_62_event_naming_flow_completes(mock_event_namer, mock_context_edm
         'media_files': []
     }
 
-    # Mock the LLM call to return a valid name (we just want to verify flow completes)
-    with patch.object(mock_event_namer, '_generate_llm_name', return_value='2024_01_01 - Test Event - Edmonton'):
+    # Mock the LLM call to return a valid name (we just want to verify flow completes).
+    # This is a home-city event (Edmonton), so the name correctly omits the city.
+    with patch.object(mock_event_namer, '_generate_llm_name', return_value='2024_01_01 - Test Event'):
         # This should NOT crash - the flow must complete to the LLM call
         result = mock_event_namer.generate_event_name(cluster_data)
 
