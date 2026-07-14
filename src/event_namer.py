@@ -418,30 +418,45 @@ class EventNamer:
         location = context['location']
         temporal = context['temporal']
 
-        # Extract the descriptive part (after date) and location suffix
+        # Extract the descriptive part (after date) for the seasonal check
+        # below. Location is no longer expected in a fixed third segment -
+        # home events correctly omit it, away events fold it into the
+        # description (issue #72) - so the hallucination checks below scan
+        # the whole name instead of a specific segment (issue #74).
         parts = event_name.split(' - ')
         description = parts[1] if len(parts) > 1 else ''
-        name_location = parts[2] if len(parts) > 2 else ''
 
-        actual_location = location.get('city', '')
+        actual_location = (location.get('city') or '').strip()
+        name_lower = event_name.lower()
 
-        print(f"🔍 VALIDATION DEBUG: Description: '{description}'")
-        print(f"🔍 VALIDATION DEBUG: Location in name: '{name_location}'")
-        print(f"🔍 VALIDATION DEBUG: Actual location: '{actual_location}'")
+        print(f"VALIDATION DEBUG: Description: '{description}'")
+        print(f"VALIDATION DEBUG: Actual location: '{actual_location}'")
 
-        # Validate location consistency: if we provided a city, LLM should use it
-        # If actual_location exists, the name should contain it (not "Unknown" or different city)
         if actual_location:
-            # Check if the actual location appears in the name
-            if name_location and actual_location.lower() in name_location.lower():
-                print(f"✅ VALIDATION DEBUG: Location matches - '{actual_location}' found in '{name_location}'")
-            elif name_location.lower() == 'unknown':
-                print(f"❌ VALIDATION DEBUG: LLM returned 'Unknown' when we provided '{actual_location}'")
+            actual_lower = actual_location.lower()
+            home_lower = self.home_city.lower()
+            is_home_event = actual_lower == home_lower
+
+            # LLM used a placeholder instead of the location we gave it
+            if re.search(r'\bunknown\b', name_lower) and actual_lower not in name_lower:
+                print(f"VALIDATION DEBUG: Rejecting - 'Unknown' used when '{actual_location}' was provided")
                 self.logger.warning(f"Rejecting name with 'Unknown' when location was provided: {event_name}")
                 return False
-            elif name_location and actual_location.lower() not in name_location.lower():
-                print(f"❌ VALIDATION DEBUG: Location mismatch - expected '{actual_location}', got '{name_location}'")
-                self.logger.warning(f"Rejecting name with wrong location: {event_name}")
+
+            # Home events were told not to state the city - if it shows up
+            # anyway, the LLM ignored the naming guidance
+            if is_home_event and re.search(rf'\b{re.escape(home_lower)}\b', name_lower):
+                print(f"VALIDATION DEBUG: Rejecting - home city '{self.home_city}' stated when guidance said not to")
+                self.logger.warning(f"Rejecting home-city name that states the city anyway: {event_name}")
+                return False
+
+            # Away events can't also be home - stating the home city while
+            # actually elsewhere is a direct contradiction (the original
+            # issue #14 failure mode: real GPS location replaced with a
+            # different one the LLM defaulted to)
+            if not is_home_event and re.search(rf'\b{re.escape(home_lower)}\b', name_lower):
+                print(f"VALIDATION DEBUG: Rejecting - states home city '{self.home_city}' while actually in '{actual_location}'")
+                self.logger.warning(f"Rejecting name stating home city '{self.home_city}' for an away event in '{actual_location}': {event_name}")
                 return False
 
         # Reject seasonal mismatches (only for obvious cases)
@@ -449,8 +464,7 @@ class EventNamer:
             self.logger.warning(f"Rejecting seasonally inappropriate name: {event_name}")
             return False
 
-        # Removed the generic terms validation as it was too restrictive
-        print(f"✅ VALIDATION DEBUG: Name passed validation: {event_name}")
+        print(f"VALIDATION DEBUG: Name passed validation: {event_name}")
         return True
 
     def _contains_meta_text(self, event_name: str) -> bool:

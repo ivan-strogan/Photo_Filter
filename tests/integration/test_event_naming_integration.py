@@ -121,12 +121,14 @@ def test_event_naming_with_real_edmonton_gps(event_namer_with_mocked_llm, real_e
     """Test complete event naming pipeline with real Edmonton GPS data."""
     print("🧪 Integration test: Event naming with real Edmonton GPS data")
 
-    # Mock the LLM response to return Edmonton (correct behavior)
+    # Mock the LLM response to return a home-city-correct name (Issue #72:
+    # Edmonton is this test's home city by default, so the name correctly
+    # omits it rather than stating it)
     with pytest.MonkeyPatch().context() as m:
         def mock_query_ollama(prompt):
             # Verify prompt includes Edmonton location
             assert 'Edmonton' in prompt, "Prompt should include Edmonton location"
-            return '2014_10_25 - Afternoon Shopping - Edmonton'
+            return '2014_10_25 - IKEA Shopping Trip'
 
         m.setattr(event_namer_with_mocked_llm, '_query_ollama', mock_query_ollama)
 
@@ -135,7 +137,6 @@ def test_event_naming_with_real_edmonton_gps(event_namer_with_mocked_llm, real_e
 
         # Verify correct location usage
         assert result is not None, "Should generate an event name"
-        assert 'Edmonton' in result, "Result should contain correct location (Edmonton)"
         assert 'Paris' not in result, "Result should NOT contain hallucinated location (Paris)"
 
     print("✅ Event naming correctly uses real GPS location (Edmonton)")
@@ -189,11 +190,13 @@ def test_issue_14_end_to_end_regression_prevention(event_namer_with_mocked_llm, 
             assert 'DO NOT invent or change the location' in prompt, \
                 "REGRESSION: Prompt must warn against hallucination"
 
-            # Simulate LLM response that respects location constraints in prompt
+            # Simulate LLM response that respects location constraints in prompt.
+            # Edmonton is this test's home city (Issue #72), so a correct
+            # response omits it rather than stating it.
             if 'Edmonton' in prompt:
-                return '2014_10_25 - Afternoon Shopping - Edmonton'
+                return '2014_10_25 - Afternoon Shopping'
             else:
-                return '2014_10_25 - Generic Event - Unknown'
+                return '2014_10_25 - Generic Event'
 
         m.setattr(event_namer_with_mocked_llm, '_query_ollama', mock_query_ollama_that_respects_constraints)
 
@@ -202,8 +205,6 @@ def test_issue_14_end_to_end_regression_prevention(event_namer_with_mocked_llm, 
 
         # Verify Issue #14 regression prevention
         assert result is not None, "REGRESSION: Should generate event name"
-        assert 'Edmonton' in result, \
-            "REGRESSION: Result must contain correct GPS location (Edmonton)"
         assert 'Paris' not in result, \
             "REGRESSION: Result must NOT contain hallucinated location (Paris)"
         assert result.startswith('2014_10_25'), \
