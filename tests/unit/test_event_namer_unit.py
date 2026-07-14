@@ -205,7 +205,7 @@ def test_query_ollama_format_requirements(mock_event_namer, mock_context_edmonto
         # Verify format requirements (updated for new prompt format)
         assert 'Format Requirements' in prompt, "Prompt should include format instructions section"
         assert 'YYYY_MM_DD' in prompt, "Prompt should specify date format"
-        assert 'Examples for Edmonton' in prompt or 'Examples for other locations' in prompt, \
+        assert 'Examples (home events have no city' in prompt, \
             "Prompt should include example outputs"
 
     print("✅ Ollama prompt includes proper format requirements")
@@ -395,7 +395,7 @@ def test_query_ollama_simple_directive_prompt_structure(mock_event_namer, mock_c
             "Prompt should include negative directive"
         assert 'Here are some options' in prompt, \
             "Prompt should show examples of WRONG meta-text output"
-        assert 'Examples for Edmonton' in prompt or 'Examples for other locations' in prompt, \
+        assert 'Examples (home events have no city' in prompt, \
             "Prompt should show positive examples"
 
         # Verify it does NOT use explanatory phrasing
