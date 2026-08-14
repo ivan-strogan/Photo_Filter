@@ -121,6 +121,17 @@ class EnvironmentConfig:
         return self.data_dir / "event_naming_cache.json"
 
     @property
+    def location_cache_file(self) -> Path:
+        """Get reverse-geocode location cache file path for current
+        environment."""
+        # Check for explicit override first
+        cache_file = os.getenv('PHOTO_FILTER_LOCATION_CACHE_FILE')
+        if cache_file:
+            return Path(cache_file)
+
+        return self.data_dir / "location_cache.json"
+
+    @property
     def caption_model(self) -> str:
         """Get the Ollama vision model used for per-photo captioning."""
         return os.getenv('PHOTO_FILTER_CAPTION_MODEL', 'gemma4:26b')
@@ -134,6 +145,27 @@ class EnvironmentConfig:
     def ollama_url(self) -> str:
         """Get the Ollama server URL used for local model inference."""
         return os.getenv('PHOTO_FILTER_OLLAMA_URL', 'http://localhost:11434')
+
+    @property
+    def iphone_automatic_dir(self) -> Path:
+        """Get the directory scanned for unorganized iPhone photos - lets a
+        pipeline run be scoped to a specific test folder (e.g. a curated
+        ground-truth set) instead of the whole library, without touching
+        any pipeline logic. Defaults to the real Sample_Photos folder."""
+        override = os.getenv('PHOTO_FILTER_IPHONE_AUTOMATIC_DIR')
+        if override:
+            return Path(override)
+        return self._project_root / "Sample_Photos" / "iPhone Automatic"
+
+    @property
+    def venue_judge_model(self) -> str:
+        """Get the Ollama model used for venue judge/verify classification
+        calls (src/venue_resolver.py). Kept independent of naming_model -
+        gemma3/gemma4 models have a documented Apple Silicon reliability bug
+        (empty responses) for this kind of structured JSON classification
+        task; qwen3:14b was validated as reliable across all 16 real test
+        clusters."""
+        return os.getenv('PHOTO_FILTER_VENUE_JUDGE_MODEL', 'qwen3:14b')
 
     @property
     def home_city(self) -> str:
@@ -182,6 +214,10 @@ def get_event_naming_cache_file() -> Path:
     """Get event naming cache file for current environment."""
     return config.event_naming_cache_file
 
+def get_location_cache_file() -> Path:
+    """Get reverse-geocode location cache file for current environment."""
+    return config.location_cache_file
+
 def is_test_environment() -> bool:
     """Check if running in test environment."""
     return config.is_test
@@ -197,6 +233,14 @@ def get_naming_model() -> str:
 def get_ollama_url() -> str:
     """Get the Ollama server URL used for local model inference."""
     return config.ollama_url
+
+def get_iphone_automatic_dir() -> Path:
+    """Get the directory scanned for unorganized iPhone photos."""
+    return config.iphone_automatic_dir
+
+def get_venue_judge_model() -> str:
+    """Get the Ollama model used for venue judge/verify classification calls."""
+    return config.venue_judge_model
 
 def get_home_city() -> str:
     """Get the user's home city for naming purposes."""

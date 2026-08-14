@@ -3,10 +3,17 @@
 import os
 from pathlib import Path
 
+try:
+    from .environment_config import get_iphone_automatic_dir
+except ImportError:
+    from environment_config import get_iphone_automatic_dir
+
 # Base paths
 BASE_DIR = Path(__file__).parent.parent
 SAMPLE_PHOTOS_DIR = BASE_DIR / "Sample_Photos"
-IPHONE_AUTOMATIC_DIR = SAMPLE_PHOTOS_DIR / "iPhone Automatic"
+# Overridable via PHOTO_FILTER_IPHONE_AUTOMATIC_DIR in .env - see
+# environment_config.py. Defaults to the real Sample_Photos folder.
+IPHONE_AUTOMATIC_DIR = get_iphone_automatic_dir()
 PICTURES_DIR = SAMPLE_PHOTOS_DIR / "Pictures"
 
 # Data directories
