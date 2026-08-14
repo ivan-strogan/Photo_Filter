@@ -10,6 +10,19 @@ from dataclasses import dataclass
 import json
 from pathlib import Path
 
+try:
+    from .environment_config import get_location_cache_file
+except ImportError:
+    from environment_config import get_location_cache_file
+
+# Proximity threshold (km) used by find_representative_location to group
+# GPS points when picking a cluster's representative location. Deliberately
+# much tighter than cluster_locations_by_proximity's default 1.0km
+# cross-venue threshold - this one targets GPS-lag-level noise (e.g. a
+# phone's first-shot-after-opening-camera position fix), not real distance
+# between different places.
+REPRESENTATIVE_LOCATION_THRESHOLD_KM = 0.15
+
 @dataclass
 class LocationInfo:
     """Location information from reverse geocoding."""
@@ -32,7 +45,7 @@ class LocationGeocoder:
         """
         self.logger = logging.getLogger(__name__)
         self.geocoder = Nominatim(user_agent=user_agent)
-        self.cache_file = Path("location_cache.json")
+        self.cache_file = get_location_cache_file()
         self.location_cache = self._load_cache()
 
     def _load_cache(self) -> Dict[str, Dict]:
@@ -208,6 +221,52 @@ class LocationGeocoder:
             clusters.append(cluster)
 
         return clusters
+
+    def find_representative_location(self, gps_coordinates: List[Tuple[float, float]],
+                                      locations: List[LocationInfo],
+                                      threshold_km: float = REPRESENTATIVE_LOCATION_THRESHOLD_KM
+                                      ) -> Optional[LocationInfo]:
+        """Pick a representative LocationInfo for a cluster using density
+        (majority-count) grouping, not distance-averaging.
+
+        A naive "use whichever photo is first chronologically" (the
+        previous behavior) lets a single outlier GPS reading - e.g. a
+        phone's first shot after opening the camera, which often uses a
+        stale cell/wifi position fix before the true GPS lock completes -
+        determine the location for an entire cluster of otherwise-
+        consistent photos. A geometric centroid/average was considered and
+        rejected: the average of two genuinely different real places (e.g.
+        a multi-stop trip) is often a point in neither of them.
+
+        Instead, this groups the cluster's GPS points by tight proximity
+        (threshold_km, deliberately much tighter than
+        cluster_locations_by_proximity's default 1.0km cross-venue
+        threshold - this one is sized to catch GPS-lag-level noise, not
+        real distance between different places) and returns the first
+        chronological photo's location within the LARGEST group. See
+        temp/diagnostics/2026-08-11_location_representative_point_bug/NOTES.md
+        for the full investigation, including why this fixed a real case
+        (29 photos at the true location + 1 outlier ~330m away) without
+        changing any of the other 9 real clusters that had no outlier.
+
+        Args:
+            gps_coordinates: (lat, lon) tuples in chronological order,
+                index-aligned with `locations`.
+            locations: LocationInfo objects, index-aligned with
+                `gps_coordinates`.
+            threshold_km: Proximity threshold for grouping (default 150m).
+
+        Returns:
+            The representative LocationInfo, or None if `locations` is empty.
+        """
+        if not locations:
+            return None
+        if len(locations) == 1:
+            return locations[0]
+
+        groups = self.cluster_locations_by_proximity(gps_coordinates, threshold_km=threshold_km)
+        largest_group = max(groups, key=len)
+        return locations[largest_group[0]]
 
     def get_location_summary(self, locations: List[LocationInfo]) -> Dict[str, Any]:
         """Get summary of location distribution.

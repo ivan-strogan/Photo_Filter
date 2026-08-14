@@ -216,6 +216,11 @@ class MediaClusteringEngine:
             # Extract GPS coordinates from files
             gps_coordinates = []
             locations = []
+            # Coordinates that were successfully geocoded, kept index-aligned
+            # with `locations` (a failed reverse_geocode for one photo would
+            # otherwise silently misalign gps_coordinates vs locations, since
+            # gps_coordinates appends unconditionally but locations doesn't)
+            geocoded_gps_coordinates = []
 
             for media_file in temporal_cluster.media_files:
                 metadata = self.metadata_extractor.extract_photo_metadata(media_file)
@@ -228,6 +233,7 @@ class MediaClusteringEngine:
                     location_info = self.geocoder.reverse_geocode(gps_coords[0], gps_coords[1])
                     if location_info:
                         locations.append(location_info)
+                        geocoded_gps_coordinates.append(gps_coords)
 
             # Determine dominant location
             dominant_location = None
@@ -235,7 +241,13 @@ class MediaClusteringEngine:
 
             if locations:
                 dominant_location = self.geocoder.find_most_common_location(locations)
-                representative_location = locations[0]  # Use first location as representative
+                # Density/majority-based pick, not "whichever photo is
+                # first" - a single outlier GPS reading (e.g. iPhone
+                # first-shot GPS lag) no longer determines the location for
+                # an entire cluster of otherwise-consistent photos. See
+                # temp/diagnostics/2026-08-11_location_representative_point_bug/NOTES.md
+                representative_location = self.geocoder.find_representative_location(
+                    geocoded_gps_coordinates, locations)
 
             # Create MediaCluster
             media_cluster = MediaCluster(
@@ -346,12 +358,22 @@ class MediaClusteringEngine:
                             cluster_id_counter, location_files
                         )
 
-                        # Determine location for this sub-cluster
+                        # Determine location for this sub-cluster - use the
+                        # same majority-group representative-point logic as
+                        # _enhance_with_location_data (not location_coords[0]
+                        # / the first chronological photo, which can be a
+                        # GPS-lag outlier - see find_representative_location).
                         if location_coords:
-                            representative_gps = location_coords[0]
-                            location_info = self.geocoder.reverse_geocode(
-                                representative_gps[0], representative_gps[1]
-                            )
+                            sub_locations = []
+                            sub_gps = []
+                            for coord in location_coords:
+                                info = self.geocoder.reverse_geocode(coord[0], coord[1])
+                                if info:
+                                    sub_locations.append(info)
+                                    sub_gps.append(coord)
+                            location_info = self.geocoder.find_representative_location(
+                                sub_gps, sub_locations
+                            ) if sub_locations else None
                         else:
                             location_info = None
 

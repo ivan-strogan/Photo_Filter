@@ -19,12 +19,16 @@ from datetime import datetime
 try:
     from src.media_clustering import MediaClusteringEngine, MediaCluster
     from src.media_detector import MediaFile
+    from src.geocoding import LocationGeocoder, LocationInfo
 except ImportError:
     import media_clustering
     import media_detector
+    import geocoding
     MediaClusteringEngine = media_clustering.MediaClusteringEngine
     MediaCluster = media_clustering.MediaCluster
     MediaFile = media_detector.MediaFile
+    LocationGeocoder = geocoding.LocationGeocoder
+    LocationInfo = geocoding.LocationInfo
 
 
 # Two locations far enough apart to force a cluster split (>1 km)
@@ -166,6 +170,75 @@ def test_misaligned_gps_falls_back_without_duplicating_or_losing_files():
         f"Duplicate files in fallback path: {sorted(all_paths)}")
     assert len(set(all_paths)) == 4, (
         f"Files lost in fallback path: expected 4, got {len(set(all_paths))}")
+
+
+@pytest.mark.unit
+@pytest.mark.regression
+def test_split_group_uses_majority_location_not_first_coordinate():
+    """Regression: _refine_with_location_clustering used to set a split
+    sub-cluster's location from location_coords[0] - the chronologically
+    first photo - instead of the majority-group representative point. A
+    30-photo New Year's cluster's first photo was a ~330m GPS-lag outlier
+    (common iPhone first-shot-after-opening-camera quirk); after
+    find_representative_location was wired into _enhance_with_location_data
+    (see test_geocoding_unit.py / NOTES.md in
+    temp/diagnostics/2026-08-11_location_representative_point_bug/), this
+    second call site - reached only when a cluster later gets split by
+    _refine_with_location_clustering - still used location_coords[0] and
+    silently reintroduced the same wrong location. Uses a real
+    LocationGeocoder (reverse_geocode stubbed, no network) so the real
+    find_representative_location/cluster_locations_by_proximity math runs."""
+    outlier_file = make_media_file("IMG_20160101_001421.JPG",
+                                    datetime(2016, 1, 1, 0, 14, 21))
+    majority_files = [make_media_file(f"IMG_20160101_00192{i}.JPG",
+                                       datetime(2016, 1, 1, 0, 19, 20 + i))
+                       for i in range(5)]
+    # A second, distant group - forces cluster_locations_by_proximity to
+    # return >1 group, which is what actually triggers the split branch
+    # (and the buggy location_coords[0] line within it) in production.
+    afternoon_file = make_media_file("IMG_20160101_163218.JPG",
+                                      datetime(2016, 1, 1, 16, 32, 18))
+    files = [outlier_file] + majority_files + [afternoon_file]
+
+    outlier_coord = (53.538372, -113.616562)  # the real GPS-lag outlier
+    majority_base = (53.539219, -113.611769)  # ~330m away - the real majority spot
+    gps = {outlier_file.filename: outlier_coord}
+    gps.update({f.filename: (majority_base[0] + i * 0.00001, majority_base[1] + i * 0.00001)
+                for i, f in enumerate(majority_files)})
+    gps[afternoon_file.filename] = COORD_DOWNTOWN
+
+    def make_location(lat, lon, neighbourhood):
+        return LocationInfo(latitude=lat, longitude=lon, address="", city="Edmonton",
+                             state="Alberta", country="Canada",
+                             raw_data={"address": {"neighbourhood": neighbourhood}})
+
+    def fake_reverse_geocode(lat, lon):
+        if abs(lat - outlier_coord[0]) < 0.0001 and abs(lon - outlier_coord[1]) < 0.0001:
+            return make_location(lat, lon, "Place LaRue")
+        return make_location(lat, lon, "Glenwood")
+
+    engine = make_engine_with_mocks(gps)
+    engine.geocoder = LocationGeocoder()
+    engine.geocoder.reverse_geocode = fake_reverse_geocode
+    # Real (unmocked) distance clustering: the 6 midnight-area points (which
+    # internally span the ~330m GPS-lag outlier) fall within the outer 1km
+    # split threshold as one group vs. the distant afternoon photo - this is
+    # what actually triggers the split branch that had the bug. The same
+    # real method, at a tighter threshold, is what find_representative_
+    # location uses inside the fix - must not be mocked, or it can't tell
+    # the outlier from the majority.
+
+    cluster = build_cluster(files, gps)
+    refined = engine._refine_with_location_clustering([cluster])
+
+    assert len(refined) == 2
+    midnight_cluster = next(c for c in refined
+                             if outlier_file.filename in [f.filename for f in c.media_files])
+    neighbourhood = midnight_cluster.location_info.raw_data["address"]["neighbourhood"]
+    assert neighbourhood == "Glenwood", (
+        f"Expected majority location 'Glenwood', got '{neighbourhood}' - "
+        "location_coords[0] (the outlier) was used instead of "
+        "find_representative_location")
 
 
 @pytest.mark.unit
