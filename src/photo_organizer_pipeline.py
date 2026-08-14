@@ -24,6 +24,7 @@ from .media_validator import MediaValidator
 from .organized_photos_scanner import OrganizedPhotosScanner
 from .content_analyzer import ContentAnalyzer
 from .config_manager import get_config
+from .environment_config import get_data_dir
 
 class PhotoOrganizerPipeline:
     """
@@ -812,9 +813,10 @@ class PhotoOrganizerPipeline:
         """Save pipeline report to file."""
         if not output_file:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            output_file = Path(f"photo_organization_report_{timestamp}.json")
+            output_file = get_data_dir() / f"photo_organization_report_{timestamp}.json"
 
         try:
+            output_file.parent.mkdir(parents=True, exist_ok=True)
             with open(output_file, 'w') as f:
                 json.dump(report, f, indent=2, default=str)
 

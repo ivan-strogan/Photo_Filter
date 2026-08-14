@@ -137,8 +137,11 @@ class ContentAnalyzer:
     _CAPTION_PROMPT = (
         "Describe this photo in 2-3 sentences, covering: the setting, any visible "
         "occasion clues (decorations, cake, rings, attire), how many people are "
-        "visible and what they are doing. Describe only what is visible; do not "
-        "guess names or relationships.")
+        "visible and what they are doing. Also note any details that would indicate "
+        "whether the setting is a private home or a commercial/retail business "
+        "(e.g. price tags, sales racks, store signage, checkout counters vs. "
+        "personal belongings, home decor, family photos on the wall). "
+        "Describe only what is visible; do not guess names or relationships.")
 
     def _generate_description(self, image: Image.Image) -> str:
         """Generate natural language description via the Ollama vision model."""
@@ -155,7 +158,10 @@ class ContentAnalyzer:
                 "think": False,
                 "options": {"temperature": 0.0, "num_predict": 350}
             }
-            response = requests.post(f"{self.ollama_url}/api/generate", json=payload, timeout=600)
+            # Generous timeout - the local Ollama server is often shared with
+            # other concurrent work, which can make an otherwise-quick
+            # captioning call take much longer than usual to get scheduled.
+            response = requests.post(f"{self.ollama_url}/api/generate", json=payload, timeout=1800)
             response.raise_for_status()
             return response.json().get("response", "").strip()
 
