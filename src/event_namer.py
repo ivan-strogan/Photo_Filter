@@ -51,6 +51,50 @@ except ImportError:
     except ImportError:
         VECTOR_DB_AVAILABLE = False
 
+# Venue resolution (fills in venue names reverse geocoding didn't surface)
+try:
+    from .venue_resolver import VenueResolver, VenueSearchError
+    VENUE_RESOLVER_AVAILABLE = True
+except ImportError:
+    try:
+        from venue_resolver import VenueResolver, VenueSearchError
+        VENUE_RESOLVER_AVAILABLE = True
+    except ImportError:
+        VENUE_RESOLVER_AVAILABLE = False
+
+# Naming prompt building blocks shared across the three mode-specific
+# prompts (home/away/unknown) - see EventNamer._build_naming_prompt. Split
+# into three prompts instead of one with home-vs-away conditional logic,
+# because the conditional kept bleeding across modes: fixing an away-city
+# bug broke home-city clusters, which then got rejected by validation and
+# produced no name at all. Resolving mode in Python and handing each prompt
+# only the ONE instruction that actually applies removes the gate entirely.
+_NAMING_PROMPT_INTRO = """You are helping organize a personal photo library. Photos have already
+been grouped into this cluster based on when and where they were taken - all
+of them belong in one folder together. Below is everything known about the
+cluster: timing, location, a description of each photo, and any people
+identified. Use this information to generate a good, human-friendly folder
+name."""
+
+_NAMING_VENUE_CONSTRAINTS = """- The raw geo data above may include a more specific venue name than the City field (e.g. a mall, restaurant, or business) - if it names a real, specific place, use that actual name rather than inventing a generic category description from the photos; only invent a generic setting description when no real venue name is available
+- If the venue is a shopping center/mall, prefer the mall's own name over the name or category of an individual store inside it (e.g. use "Capilano Mall", not "Electronics Store" or a specific store's brand name) - the mall name is more useful and recognizable for organizing photos than a specific store visit. Still include the general activity from the photos alongside the mall name rather than dropping it (e.g. "Furniture Shopping at Capilano Mall" - not just "Capilano Mall" alone) - but keep the activity general and safely supported by what's shown (e.g. "Furniture Shopping", not "Interior Design Consultation" - browsing furniture displays does not confirm a formal consultation took place)"""
+
+_NAMING_GENERAL_CONSTRAINTS = """- Be specific and descriptive, avoid generic terms like "Photoshoot", "Event Name", "Outing"
+- Prefer the photo descriptions and people above over generic season/time labels
+- If the Date/Holiday above indicates a specific occasion, prefer that over decor visible in the photos when they conflict (e.g. a Christmas tree still up in photos taken on New Year's Day - trust the date, not the decor)
+- Consider the season and weather for the location
+- If no specific activity detected, use time/duration/setting context"""
+
+_NAMING_OUTPUT_INSTRUCTIONS = """**CRITICAL OUTPUT INSTRUCTION:**
+Generate ONLY the folder name using the EXACT location provided above.
+Do NOT output:
+- Explanations or commentary
+- Multiple options or lines
+- Meta-text like "Here are some options..." or "I suggest..."
+- Just the single folder name, nothing else
+
+Output only the folder name now:"""
+
 class EventNamer:
     """
     Generates intelligent event names using LLM and multi-signal analysis.
@@ -73,7 +117,8 @@ class EventNamer:
     def __init__(self, api_key: Optional[str] = None, enable_llm: bool = True,
                  ollama_model: Optional[str] = None, ollama_url: str = "http://localhost:11434",
                  vector_db: Optional[Any] = None, photo_vectorizer: Optional[Any] = None,
-                 home_city: Optional[str] = None, home_state: Optional[str] = None):
+                 home_city: Optional[str] = None, home_state: Optional[str] = None,
+                 enable_venue_search: bool = True):
         """
         Initialize the event namer.
 
@@ -90,6 +135,12 @@ class EventNamer:
                 elsewhere do.
             home_state: User's home state/province (default: PHOTO_FILTER_HOME_STATE
                 env var). Disambiguates home_city from same-named cities elsewhere.
+            enable_venue_search: Whether to look up a specific venue name (via
+                src/venue_resolver.py) when reverse geocoding didn't surface
+                one - e.g. a ski hill or restaurant with no business name in
+                the geocoded address. Requires network access (Ollama +
+                OpenStreetMap Overpass API); fails closed (no venue name
+                added) on any error.
 
         For junior developers:
         - API keys should never be hardcoded - use environment variables
@@ -128,6 +179,14 @@ class EventNamer:
         self.home_city = home_city or get_home_city()
         self.home_state = home_state or get_home_state()
         self.ollama_model = ollama_model or get_naming_model()
+
+        # Venue resolution: fills in a venue name (e.g. a ski hill or
+        # restaurant) when reverse geocoding didn't surface one
+        self.venue_resolver = (
+            VenueResolver(ollama_url=self.ollama_url)
+            if (self.use_ollama and enable_venue_search and VENUE_RESOLVER_AVAILABLE)
+            else None
+        )
 
         # Vector database for finding similar organized photos
         self.vector_db = vector_db
@@ -314,11 +373,14 @@ class EventNamer:
             for section_key, section_data in context.items():
                 self._log_diagnostics(f"{section_key}: {section_data}")
 
-            # Check cache first (save API costs and time)
+            # Check cache first (save API costs and time). A None key means
+            # there's no real content signal to key on (issue #76) - always
+            # skip the cache in that case rather than risk a collision with
+            # an unrelated cluster.
             cache_key = self._generate_cache_key(context)
             print(f"💾 EVENT NAMING: Cache key: {cache_key}")
             self._log_diagnostics(f"Cache key: {cache_key}")
-            if cache_key in self.naming_cache:
+            if cache_key is not None and cache_key in self.naming_cache:
                 cached_name = self.naming_cache[cache_key]
                 print(f"💾 EVENT NAMING: Found cached name: {cached_name}")
                 self._log_diagnostics(f"CACHE HIT: {cached_name}")
@@ -327,6 +389,14 @@ class EventNamer:
 
             print(f"💾 EVENT NAMING: No cached name found, generating new one...")
             self._log_diagnostics("CACHE MISS - generating new name")
+
+            # Resolve a specific venue name (e.g. a ski hill or restaurant)
+            # if reverse geocoding didn't surface one - only runs on a cache
+            # miss, since it's the expensive path (network calls)
+            if self.venue_resolver and not self._resolve_venue(context):
+                print(f"❌ EVENT NAMING: Venue search failed, skipping this cycle")
+                self._log_diagnostics("=== EVENT NAMING DIAGNOSTICS END ===")
+                return None
 
             # Try different naming approaches in order of sophistication
             event_name = None
@@ -369,11 +439,15 @@ class EventNamer:
 
             if is_valid:
                 # Only cache results with sufficient content confidence
-                # This prevents low-quality results from polluting the cache
+                # This prevents low-quality results from polluting the cache.
+                # content_confidence is caption-generation confidence, not
+                # scene/object detection confidence, so it does NOT catch the
+                # empty-scenes/objects case - that's what the None cache_key
+                # guard below is for (issue #76).
                 content_confidence = context['content'].get('confidence', 0.0)
                 min_cache_confidence = 0.5
 
-                if content_confidence >= min_cache_confidence:
+                if cache_key is not None and content_confidence >= min_cache_confidence:
                     # Cache the result for similar future events
                     print(f"💾 EVENT NAMING: Caching validated name: {event_name} (confidence: {content_confidence:.2f})")
                     self.naming_cache[cache_key] = event_name
@@ -440,6 +514,15 @@ class EventNamer:
             home_lower = self.home_city.lower()
             is_home_event = actual_lower == home_lower
 
+            # A venue can legitimately have the home city baked into its own
+            # name (e.g. "Edmonton EXPO Centre") - only check the venue's own
+            # name field, not the full geocoded address, since almost every
+            # address's display_name ends with "..., Edmonton, ..." regardless
+            # of what's actually at that location (issue #72/#74)
+            raw_geo = location.get('raw_geo') or {}
+            venue_own_name = (raw_geo.get('name') or '').lower()
+            home_city_in_venue_name = home_lower in venue_own_name
+
             # LLM used a placeholder instead of the location we gave it
             if re.search(r'\bunknown\b', name_lower) and actual_lower not in name_lower:
                 print(f"VALIDATION DEBUG: Rejecting - 'Unknown' used when '{actual_location}' was provided")
@@ -448,7 +531,7 @@ class EventNamer:
 
             # Home events were told not to state the city - if it shows up
             # anyway, the LLM ignored the naming guidance
-            if is_home_event and re.search(rf'\b{re.escape(home_lower)}\b', name_lower):
+            if is_home_event and not home_city_in_venue_name and re.search(rf'\b{re.escape(home_lower)}\b', name_lower):
                 print(f"VALIDATION DEBUG: Rejecting - home city '{self.home_city}' stated when guidance said not to")
                 self.logger.warning(f"Rejecting home-city name that states the city anyway: {event_name}")
                 return False
@@ -457,7 +540,7 @@ class EventNamer:
             # actually elsewhere is a direct contradiction (the original
             # issue #14 failure mode: real GPS location replaced with a
             # different one the LLM defaulted to)
-            if not is_home_event and re.search(rf'\b{re.escape(home_lower)}\b', name_lower):
+            if not is_home_event and not home_city_in_venue_name and re.search(rf'\b{re.escape(home_lower)}\b', name_lower):
                 print(f"VALIDATION DEBUG: Rejecting - states home city '{self.home_city}' while actually in '{actual_location}'")
                 self.logger.warning(f"Rejecting name stating home city '{self.home_city}' for an away event in '{actual_location}': {event_name}")
                 return False
@@ -503,6 +586,38 @@ class EventNamer:
 
         return any(phrase in description for phrase in meta_phrases)
 
+    def _resolve_venue(self, context: Dict[str, Any]) -> bool:
+        """Fill in a specific venue name (e.g. a ski hill or restaurant)
+        when reverse geocoding didn't surface one, using self.venue_resolver.
+        Mutates context['location']['raw_geo']['name'] in place if a venue
+        is found.
+
+        Returns:
+            True if naming should proceed (a venue was resolved, or none
+            was needed). False if the venue search itself failed (not just
+            "found nothing") and naming should be skipped this cycle rather
+            than proceed with an unenriched raw_geo that could surface a
+            misleading field (e.g. a bare street address) as if it were a
+            confirmed venue - see VenueSearchError in venue_resolver.py.
+        """
+        location = context['location']
+        raw_geo = location.get('raw_geo')
+        captions = context['content'].get('sample_captions') or []
+        if not raw_geo or not captions:
+            return True
+
+        try:
+            confirmed_venue = self.venue_resolver.resolve(raw_geo, captions)
+        except VenueSearchError as e:
+            self.logger.warning(f"Venue search failed, skipping naming this cycle: {e}")
+            self._log_diagnostics(f"VENUE SEARCH FAILED - skipping naming: {e}")
+            return False
+
+        if confirmed_venue:
+            raw_geo['name'] = confirmed_venue
+            location['raw_geo'] = raw_geo
+        return True
+
     def _build_event_context(self, cluster_data: Dict[str, Any]) -> Dict[str, Any]:
         """
         Build comprehensive context for event naming.
@@ -536,6 +651,7 @@ class EventNamer:
         video_count = cluster_data.get('video_count', len([f for f in files if getattr(f, 'file_type', None) == 'video']))
 
         # Temporal context
+        holiday_name = self._check_holiday(start_time) if start_time else ''
         temporal_context = {
             'date': start_time.strftime('%Y_%m_%d') if start_time else 'unknown_date',
             'time_of_day': self._classify_time_of_day(start_time) if start_time else 'unknown',
@@ -544,7 +660,8 @@ class EventNamer:
             'duration_category': self._classify_duration(duration),
             'season': self._get_season(start_time) if start_time else 'unknown',
             'is_weekend': start_time.weekday() >= 5 if start_time else False,
-            'is_holiday': self._check_holiday(start_time) if start_time else False
+            'is_holiday': bool(holiday_name),
+            'holiday_name': holiday_name
         }
 
         # Location context - handle both location_info object and dominant_location string
@@ -570,26 +687,14 @@ class EventNamer:
         # Neighbourhood/suburb from the reverse-geocode raw data when present
         raw_geo = safe_get_location_attr(location_info, 'raw_data', {}) or {}
         geo_address = raw_geo.get('address', {}) if isinstance(raw_geo, dict) else {}
-        area = geo_address.get('suburb') or geo_address.get('neighbourhood') or ''
-
-        # Specific venue name/type from the reverse-geocode raw data (e.g.
-        # "Kingsway Mall" / shop) - only for actual points of interest; roads,
-        # houses and generic buildings get a 'name' from OSM too but aren't
-        # venues (issue #72 - "Shopping Trip to Kingsway Mall" vs just
-        # "Shopping Trip")
-        venue_classes = {'amenity', 'shop', 'tourism', 'leisure'}
-        osm_class = raw_geo.get('class', '') if isinstance(raw_geo, dict) else ''
-        osm_type = raw_geo.get('type', '') if isinstance(raw_geo, dict) else ''
-        venue_name = (raw_geo.get('name') or '') if osm_class in venue_classes else ''
-        venue_type = osm_type.replace('_', ' ') if venue_name else 'unknown'
+        area = geo_address.get('neighbourhood') or geo_address.get('quarter') or geo_address.get('suburb') or ''
 
         location_context = {
             'has_gps': bool(safe_get_location_attr(location_info, 'latitude')) or bool(cluster_data.get('gps_coordinates')),
             'city': safe_get_location_attr(location_info, 'city') or self._extract_city_from_location_string(dominant_location),
             'state': safe_get_location_attr(location_info, 'state'),
             'country': safe_get_location_attr(location_info, 'country'),
-            'venue_type': venue_type,
-            'venue_name': venue_name,
+            'raw_geo': raw_geo if isinstance(raw_geo, dict) and raw_geo else None,
             'location_nickname': self._get_location_nickname(location_info) or self._extract_city_from_location_string(dominant_location),
             'full_location': dominant_location,
             'area': area,
@@ -755,6 +860,8 @@ class EventNamer:
                 "model": self.ollama_model,
                 "prompt": prompt,  # Use the provided prompt from _build_naming_prompt()
                 "stream": False,
+                "think": False,  # thinking models otherwise burn num_predict on hidden
+                                  # reasoning tokens and return an empty response
                 "options": {
                     "temperature": 0.3,
                     "num_predict": 30  # Allow room for descriptive event names
@@ -801,95 +908,52 @@ class EventNamer:
             self.llm_logger.error(f"OLLAMA EXCEPTION: {str(e)}")
             return None
 
-    def _build_naming_prompt(self, context: Dict[str, Any]) -> str:
-        """
-        Build a detailed prompt for the LLM to generate event names.
+    def _determine_location_mode(self, location: Dict[str, Any]) -> str:
+        """Resolve home/away/unknown from data already available - GPS
+        presence and city vs home_city - so the naming prompt never has to
+        ask the LLM to correctly gate a home-vs-away conditional itself."""
+        if not location.get('has_gps'):
+            return 'unknown'
+        city = (location.get('city') or '').strip().lower()
+        if city == (self.home_city or '').strip().lower():
+            return 'home'
+        return 'away'
 
-        This method creates a comprehensive prompt that gives the LLM
-        all the context it needs to make intelligent naming decisions.
+    def _build_naming_event_details_block(self, temporal: Dict[str, Any]) -> str:
+        return f"""**Event Details:**
+- Date: {temporal['date']}
+- Time of day: {temporal['time_of_day']}
+- Duration: {temporal['duration_category']} ({temporal['duration_hours']:.1f} hours)
+- Day: {temporal['day_of_week']} ({'weekend' if temporal['is_weekend'] else 'weekday'})
+- Season: {temporal['season']}
+- Holiday: {temporal.get('holiday_name') or ('Yes' if temporal['is_holiday'] else 'No')}"""
 
-        Args:
-            context: Structured event context
+    def _build_naming_photos_block(self, content: Dict[str, Any]) -> str:
+        # Numbered so the LLM knows exactly how many photos are in the
+        # cluster and that each caption maps to one of them (issue #72)
+        captions = content.get('sample_captions') or []
+        if not captions:
+            return ""
+        total = len(captions)
+        lines = "\n".join(f'- Photo {i+1} of {total}: "{c}"' for i, c in enumerate(captions))
+        return f"\n\n**Photos in this cluster ({total} total):**\n{lines}"
 
-        Returns:
-            Formatted prompt string
-
-        For junior developers:
-        - Good prompts are crucial for getting good AI results
-        - Include examples of desired output format
-        - Provide clear constraints and rules
-        - Give context about the use case
-        """
-        temporal = context['temporal']
-        location = context['location']
-        content = context['content']
-        media = context['media']
-        people = context['people']
-
-        # Location spread: a multi-town trip and an afternoon at one cafe
-        # both show up as "GPS available: Yes" without this (issue #72)
-        gps_spread_km = location.get('gps_spread_km')
-        if gps_spread_km is not None and gps_spread_km >= 2.0:
-            location_spread = f"Multi-location ({gps_spread_km:.1f} km spread across the cluster)"
-        elif location.get('has_gps'):
-            location_spread = "Single venue"
-        else:
-            location_spread = "Unknown"
-        area = location.get('area') or ''
-        area_line = f"\n- Area: {area}" if area else ""
-
-        # Specific venue name (e.g. "Kingsway Mall") - lets the LLM name an
-        # event after the actual place instead of a generic description
-        # (issue #72 - "Shopping Trip to Kingsway Mall" vs just "Shopping Trip")
-        venue_name = location.get('venue_name') or ''
-        venue_line = f"\n- Venue name: {venue_name}" if venue_name else ""
-
-        # Home vs. away: the real organized library never states the home
-        # city in the name (it's the default - e.g. "La Cite Francophone")
-        # but always names trips elsewhere (e.g. "Mexico Trip") - issue #72
-        city = location.get('city') or ''
-        state = location.get('state') or ''
-        is_home_city = bool(city) and city.strip().lower() == self.home_city.strip().lower() and (
-            not state or not self.home_state or state.strip().lower() == self.home_state.strip().lower()
-        )
-        if not city:
-            location_guidance = "Location is unknown - do not mention a city or place in the name."
-        elif is_home_city:
-            location_guidance = (
-                f"This event is in {self.home_city} (home) - do NOT state the city in the name. "
-                f"Use the venue name above if given, otherwise just describe the event."
-            )
-        elif venue_name:
-            location_guidance = (
-                f"This event is NOT in {self.home_city} (away/trip) - name the location prominently, "
-                f"using the venue name and/or the city, e.g. \"{venue_name} - {city}\" or "
-                f"\"{venue_name} in {city}\"."
-            )
-        else:
-            location_guidance = (
-                f"This event is NOT in {self.home_city} (away/trip) - name the location prominently, "
-                f"e.g. \"{city} Trip\" or work \"{city}\" into the description."
-            )
-
-        # Representative photo descriptions from the vision model - the
-        # richest signal available, previously generated then discarded
-        sample_captions = content.get('sample_captions') or []
-        captions_block = ""
-        if sample_captions:
-            caption_lines = "\n".join(f'- "{c}"' for c in sample_captions[:3])
-            captions_block = f"\n\n**Photo Descriptions:**\n{caption_lines}"
-
-        # People usage guidance - people show up in context but nothing
-        # previously told the LLM it's allowed to name events after them
-        people_guidance = ""
+    def _build_naming_people_block(self, people: Dict[str, Any]) -> str:
+        guidance = ""
         if people['has_people'] and people['people_count'] <= 4:
-            people_guidance = (f"\n- {people['main_people']} appears in this event; if the event "
-                               f"centers on them, use their name (e.g. \"{people['main_people']}'s Birthday\")")
+            guidance = (f"\n- {people['main_people']} appears in this event; if the event "
+                        f"centers on them, use their name (e.g. \"{people['main_people']}'s Birthday\")")
+        return f"""**People Detected:**
+- People: {people['main_people'] if people['has_people'] else 'None identified'}
+- People count: {people['people_count']}
+- Face count: {people['face_count']}
+- Category: {people['people_category']}{guidance}"""
 
+    def _build_naming_media_block(self, media: Dict[str, Any], similarity: Optional[Dict[str, Any]]) -> str:
         # Similar past events from the organized library - the pattern-
         # matching signal that #67 found was computed but never sent
-        similarity = context.get('similarity') or {}
         similarity_block = ""
+        similarity = similarity or {}
         if similarity.get('enabled') and similarity.get('similar_photos'):
             best_per_folder: Dict[str, float] = {}
             for match in similarity['similar_photos']:
@@ -899,83 +963,172 @@ class EventNamer:
                     best_per_folder[folder] = score
             top_matches = sorted(best_per_folder.items(), key=lambda kv: kv[1], reverse=True)[:5]
             if top_matches:
-                match_lines = "\n".join(f"- {folder} (similarity: {score:.2f})" for folder, score in top_matches)
+                lines = "\n".join(f"- {folder} (similarity: {score:.2f})" for folder, score in top_matches)
                 similarity_block = (
-                    "\n\n**Similar Past Events (use as naming guidance):**\n"
-                    f"{match_lines}\n"
-                    "- If these share a clear naming pattern, follow it for consistency"
+                    "\n\n**Similar Past Events (minor signal - formatting/style reference only):**\n"
+                    f"{lines}\n"
+                    "- These are visually similar past photos, not necessarily the same occasion - "
+                    "only borrow their naming STYLE (e.g. date format, how specific the wording is), "
+                    "never their subject/occasion unless the photo descriptions above actually support it"
                 )
-
-        prompt = f"""Create a descriptive folder name for a photo event with this information:
-
-**Event Details:**
-- Date: {temporal['date']}
-- Time of day: {temporal['time_of_day']}
-- Duration: {temporal['duration_category']} ({temporal['duration_hours']:.1f} hours)
-- Day: {temporal['day_of_week']} ({'weekend' if temporal['is_weekend'] else 'weekday'})
-- Season: {temporal['season']}
-- Holiday: {'Yes' if temporal['is_holiday'] else 'No'}
-
-**Location:**
-- City: {location['city'] or 'Unknown'}
-- Venue type: {location['venue_type']}
-- GPS available: {'Yes' if location['has_gps'] else 'No'}
-- Location spread: {location_spread}{area_line}{venue_line}
-- Naming guidance: {location_guidance}
-
-**Content Analysis:**
-- Activities: {', '.join([item[0] if isinstance(item, tuple) else str(item) for item in content['activities'][:3]]) if content['activities'] else 'None detected'}
-- Scenes: {', '.join([item[0] if isinstance(item, tuple) else str(item) for item in content['scenes'][:3]]) if content['scenes'] else 'None detected'}
-- Objects: {', '.join([item[0] if isinstance(item, tuple) else str(item) for item in content['objects'][:3]]) if content['objects'] else 'None detected'}
-- Event type: {content['event_type']}{captions_block}
-
-**People Detected:**
-- People: {people['main_people'] if people['has_people'] else 'None identified'}
-- People count: {people['people_count']}
-- Face count: {people['face_count']}
-- Category: {people['people_category']}{people_guidance}
-
-**Media:**
+        return f"""**Media:**
 - Total files: {media['total_files']}
-- Photos: {media['photo_count']}, Videos: {media['video_count']}{similarity_block}
+- Photos: {media['photo_count']}, Videos: {media['video_count']}{similarity_block}"""
 
-**Format Requirements:**
+    def _build_naming_prompt_home(self, context: Dict[str, Any]) -> str:
+        temporal, location, content = context['temporal'], context['location'], context['content']
+        people, media = context['people'], context['media']
+
+        gps_spread_km = location.get('gps_spread_km')
+        location_spread = (f"Multi-location ({gps_spread_km:.1f} km spread across the cluster)"
+                            if gps_spread_km is not None and gps_spread_km >= 2.0 else "Single venue")
+        area = location.get('area') or ''
+        area_line = f"\n- Area: {area}" if area else ""
+        # Raw reverse-geocode data, unfiltered - lets the LLM find a specific
+        # venue name itself (e.g. a business name buried in an unexpected
+        # field like address.road, the way "Ed's Bowling" was found) rather
+        # than us pre-guessing which field is "the" venue name (issue #72)
+        raw_geo = location.get('raw_geo')
+        raw_geo_block = (f"\n\nHere is the raw geo data for the cluster - look for a specific "
+                          f"venue/business name anywhere in it, not just the top-level \"name\" "
+                          f"field, since it may be buried in the address details:\n"
+                          f"{json.dumps(raw_geo, indent=2)}") if raw_geo else ""
+
+        location_section = f"""**General Location Information:**
+- This event took place at {self.home_city}, {self.home_state} which is the person's home city - never state the city or state in the folder name
+- Location spread: {location_spread}{area_line}{raw_geo_block}"""
+
+        format_requirements = f"""**Format Requirements:**
 - Start with date: YYYY_MM_DD
 - Add descriptive event name
-- Add the location only if the naming guidance above says to - fold it into the description naturally, don't just append "- City"
+- If the raw geo data above names a real, specific venue/business anywhere in it, use that actual name instead of inventing a generic description or category - this is the most important location signal, and takes priority over everything else below
+- Never state a city or state in the folder name - this is the person's home city
+- If a venue name is used, do NOT also state the Area/neighbourhood - a venue name and an Area are mutually exclusive, never combine them (e.g. "Furniture Shopping at Capilano Mall", not "Furniture Shopping at Capilano Mall in Bonnie Doon")
+- Only when there's no venue name at all, this is a private residence: fold the Area/neighbourhood into the description if one is available (e.g. "Movie Night with Friends in Bonnie Doon"); if no Area is available either, just use the descriptive name alone with no location mentioned
 - Keep under 60 characters total
 - Use title case
-- No special characters except hyphens and underscores
+- No special characters except hyphens and underscores"""
 
-**IMPORTANT CONSTRAINTS:**
-- ONLY use the provided location: {location['city'] or 'Unknown'}
-- DO NOT invent or change the location - use EXACTLY what is provided
-- Follow the location naming guidance above - home city is implicit and should not be stated; away locations should be named
-- Be specific and descriptive, avoid generic terms like "Photoshoot", "Event Name", "Outing"
-- Prefer the photo descriptions and people above over generic season/time labels
-- Consider the season and weather for the location
-- If no specific activity detected, use time/duration/setting context
+        constraints = f"""**IMPORTANT CONSTRAINTS:**
+- DO NOT invent or state a city or state anywhere in the name
+{_NAMING_VENUE_CONSTRAINTS}
+{_NAMING_GENERAL_CONSTRAINTS}"""
 
-**Examples (home events have no city; away events name the location):**
-- 2024_01_15 - Sarah's Birthday Dinner
+        examples = f"""**Examples (home location is {self.home_city}, {self.home_state} - never stated):**
+- 2024_01_15 - Sarah's Birthday Dinner in Strathcona
 - 2024_07_20 - Canada Day Festival
 - 2024_12_25 - Christmas Morning
-- 2024_03_08 - Foosball Night with Friends
+- 2024_03_08 - Game Night with Friends in Riverbend
+- 2024_02_10 - Skating at Hawrelak Park"""
+
+        return "\n\n".join([
+            _NAMING_PROMPT_INTRO, self._build_naming_event_details_block(temporal),
+            location_section + self._build_naming_photos_block(content),
+            self._build_naming_people_block(people),
+            self._build_naming_media_block(media, context.get('similarity')),
+            format_requirements, constraints, examples, _NAMING_OUTPUT_INSTRUCTIONS,
+        ])
+
+    def _build_naming_prompt_away(self, context: Dict[str, Any]) -> str:
+        temporal, location, content = context['temporal'], context['location'], context['content']
+        people, media = context['people'], context['media']
+
+        gps_spread_km = location.get('gps_spread_km')
+        location_spread = (f"Multi-location ({gps_spread_km:.1f} km spread across the cluster)"
+                            if gps_spread_km is not None and gps_spread_km >= 2.0 else "Single venue")
+        raw_geo = location.get('raw_geo')
+        raw_geo_block = f"\n\nHere is the raw geo data for the cluster:\n{json.dumps(raw_geo, indent=2)}" if raw_geo else ""
+        city = location['city'] or 'Unknown'
+
+        location_section = f"""**Location:**
+- City: {city}
+- State: {location['state'] or 'Unknown'}
+- Country: {location['country'] or 'Unknown'}
+- Location spread: {location_spread}{raw_geo_block}"""
+
+        format_requirements = f"""**Format Requirements:**
+- Start with date: YYYY_MM_DD
+- Add descriptive event name
+- Always fold the city ("{city}") into the description naturally (e.g. "Sarah's Birthday Dinner in Toronto", "Ramen Night at Sakura Sushi in Winnipeg") - do this whether or not a venue name is used, don't just append "- City"
+- If a specific venue name is available (from the raw geo data above), use it alongside the city instead of inventing a generic description
+- Keep under 60 characters total
+- Use title case
+- No special characters except hyphens and underscores"""
+
+        constraints = f"""**IMPORTANT CONSTRAINTS:**
+- ONLY use the provided city: {city}
+- DO NOT invent or change the location - use EXACTLY what is provided
+{_NAMING_VENUE_CONSTRAINTS}
+{_NAMING_GENERAL_CONSTRAINTS}"""
+
+        examples = """**Examples (always state the city):**
 - 2024_08_10 - Vancouver Beach Day
 - 2018_02_09 - Mexico Trip
 - 2023_01_15 - Elena's Birthday in Toronto
+- 2024_11_02 - Ramen Night at Sakura Sushi in Winnipeg"""
 
-**CRITICAL OUTPUT INSTRUCTION:**
-Generate ONLY the folder name using the EXACT location provided above.
-Do NOT output:
-- Explanations or commentary
-- Multiple options or lines
-- Meta-text like "Here are some options..." or "I suggest..."
-- Just the single folder name, nothing else
+        return "\n\n".join([
+            _NAMING_PROMPT_INTRO, self._build_naming_event_details_block(temporal),
+            location_section + self._build_naming_photos_block(content),
+            self._build_naming_people_block(people),
+            self._build_naming_media_block(media, context.get('similarity')),
+            format_requirements, constraints, examples, _NAMING_OUTPUT_INSTRUCTIONS,
+        ])
 
-Output only the folder name now:"""
+    def _build_naming_prompt_unknown(self, context: Dict[str, Any]) -> str:
+        temporal, content = context['temporal'], context['content']
+        people, media = context['people'], context['media']
 
-        return prompt
+        location_section = "**Location:**\n- Unknown - no GPS data is available for this event"
+
+        format_requirements = """**Format Requirements:**
+- Start with date: YYYY_MM_DD
+- Add descriptive event name
+- Do not mention any location - no city, no area, nothing - we have no location data for this event
+- Keep under 60 characters total
+- Use title case
+- No special characters except hyphens and underscores"""
+
+        constraints = f"""**IMPORTANT CONSTRAINTS:**
+- DO NOT invent a location - none is available
+{_NAMING_GENERAL_CONSTRAINTS}"""
+
+        examples = """**Examples (no location data - never mention a location):**
+- 2024_01_15 - Sarah's Birthday Dinner
+- 2024_07_20 - Canada Day Festival
+- 2024_03_08 - Game Night with Friends"""
+
+        return "\n\n".join([
+            _NAMING_PROMPT_INTRO, self._build_naming_event_details_block(temporal),
+            location_section + self._build_naming_photos_block(content),
+            self._build_naming_people_block(people),
+            self._build_naming_media_block(media, context.get('similarity')),
+            format_requirements, constraints, examples, _NAMING_OUTPUT_INSTRUCTIONS,
+        ])
+
+    def _build_naming_prompt(self, context: Dict[str, Any]) -> str:
+        """
+        Build a detailed prompt for the LLM to generate event names.
+
+        Dispatches to one of three mode-specific prompt builders (home/away/
+        unknown) based on GPS + city vs home_city, resolved in
+        _determine_location_mode. See the module-level comment above
+        _NAMING_PROMPT_INTRO for why this is split into three prompts
+        instead of one with home-vs-away conditional logic.
+
+        Args:
+            context: Structured event context
+
+        Returns:
+            Formatted prompt string
+        """
+        mode = self._determine_location_mode(context['location'])
+        builder = {
+            'home': self._build_naming_prompt_home,
+            'away': self._build_naming_prompt_away,
+            'unknown': self._build_naming_prompt_unknown,
+        }[mode]
+        return builder(context)
 
     def _generate_template_name(self, context: Dict[str, Any]) -> str:
         """
@@ -1324,20 +1477,29 @@ Output only the folder name now:"""
         else:
             return 'fall'
 
-    def _check_holiday(self, dt: datetime) -> bool:
-        """Check if date is a major holiday."""
-        # Simple holiday detection - can be expanded
+    def _check_holiday(self, dt: datetime) -> str:
+        """Return the holiday name if this date is a major holiday, else ''.
+
+        Fixed-date holidays only (Canada + Eastern Europe, matching this
+        library's actual events) - variable-date holidays (Easter, Family
+        Day, Thanksgiving, Victoria Day, Labour Day) would need real date
+        calculation and aren't covered yet.
+        """
         month, day = dt.month, dt.day
-        holidays = [
-            (1, 1),   # New Year's Day
-            (2, 14),  # Valentine's Day
-            (7, 1),   # Canada Day
-            (7, 4),   # Independence Day
-            (10, 31), # Halloween
-            (12, 25), # Christmas
-            (12, 31), # New Year's Eve
-        ]
-        return (month, day) in holidays
+        holidays = {
+            (1, 1): "New Year's Day",
+            (1, 7): "Orthodox Christmas",
+            (1, 14): "Old New Year",
+            (2, 14): "Valentine's Day",
+            (3, 8): "International Women's Day",
+            (7, 1): "Canada Day",
+            (10, 31): "Halloween",
+            (11, 11): "Remembrance Day",
+            (12, 25): "Christmas",
+            (12, 26): "Boxing Day",
+            (12, 31): "New Year's Eve",
+        }
+        return holidays.get((month, day), '')
 
     def _get_location_nickname(self, location_info: Any) -> str:
         """Get friendly nickname for location."""
@@ -1472,7 +1634,7 @@ Output only the folder name now:"""
             return 'sporadic'
 
     # Utility methods
-    def _generate_cache_key(self, context: Dict[str, Any]) -> str:
+    def _generate_cache_key(self, context: Dict[str, Any]) -> Optional[str]:
         """Generate cache key for similar events.
 
         The cache key must be specific enough to avoid false cache hits where
@@ -1481,6 +1643,14 @@ Output only the folder name now:"""
         - Location: city
         - Content: event_type, primary_activity, top scenes, top objects
         - People: people_category (solo/couple/group/no_people)
+
+        Returns None when scenes and objects are both empty (issue #76):
+        with no real content signal, the key collapses to fixed placeholder
+        strings, so two genuinely different small events on the same city/
+        weekday/time-of-day (e.g. two different stops on the same trip) can
+        collide on an identical key. None means "don't trust this key" -
+        callers must skip the cache entirely (no read, no write) rather than
+        treat it as a normal cache key.
         """
         temporal = context['temporal']
         location = context['location']
@@ -1491,6 +1661,9 @@ Output only the folder name now:"""
         # Note: scenes/objects may be tuples like ('home', 6) or strings
         raw_scenes = content.get('scenes', [])
         raw_objects = content.get('objects', [])
+
+        if not raw_scenes and not raw_objects:
+            return None
 
         # Extract scene names (handle both tuple and string formats)
         scenes = [s[0] if isinstance(s, tuple) else s for s in raw_scenes]

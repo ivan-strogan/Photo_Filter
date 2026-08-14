@@ -62,6 +62,17 @@ def mock_cluster_data():
             'country': 'Canada',
             'coordinates': (53.5461, -113.4938)
         },
+        # EventNamer._build_event_context reads content_analysis for a
+        # confidence score - without it, content_confidence is always 0.0,
+        # which is below the 0.5 caching threshold in generate_event_name,
+        # so a generated name is never cached no matter what the LLM returns
+        'content_analysis': {
+            'average_confidence': 0.8,
+            'top_objects': ['cup', 'table'],
+            'top_scenes': ['cafe'],
+            'top_activities': ['coffee'],
+            'sample_captions': ['A person sitting at a table with a cup of coffee in a cafe setting.']
+        },
         'metadata': {
             'total_photos': 2,
             'duration_hours': 1.0,

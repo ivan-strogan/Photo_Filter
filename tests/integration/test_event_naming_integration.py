@@ -185,9 +185,9 @@ def test_issue_14_end_to_end_regression_prevention(event_namer_with_mocked_llm, 
         def mock_query_ollama_that_respects_constraints(prompt):
             # Verify the prompt has strong location constraints
             # This simulates what would happen with real Ollama after our fix
-            assert 'ONLY use the provided location' in prompt, \
+            assert 'DO NOT invent or state a city or state anywhere in the name' in prompt, \
                 "REGRESSION: Prompt must include location constraint"
-            assert 'DO NOT invent or change the location' in prompt, \
+            assert 'never state the city or state in the folder name' in prompt, \
                 "REGRESSION: Prompt must warn against hallucination"
 
             # Simulate LLM response that respects location constraints in prompt.
