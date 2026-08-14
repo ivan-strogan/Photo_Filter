@@ -120,10 +120,13 @@ def test_query_ollama_simple_includes_location_constraint(mock_event_namer, mock
         # Verify the method was called
         assert mock_post.called, "requests.post should be called"
 
-        # Verify location constraints are in the built prompt (updated for new prompt format)
+        # Verify location constraints are in the built prompt (home mode - Edmonton
+        # is the configured home city, so the prompt withholds rather than states it)
         assert 'Edmonton' in prompt, "Prompt should include actual location (Edmonton)"
-        assert 'ONLY use the provided location' in prompt, "Prompt should have location constraint"
-        assert 'DO NOT invent or change the location' in prompt, "Prompt should warn against hallucination"
+        assert 'DO NOT invent or state a city or state anywhere in the name' in prompt, \
+            "Prompt should have location constraint"
+        assert 'never state the city or state in the folder name' in prompt, \
+            "Prompt should warn against hallucination"
 
         # Verify result includes correct location
         assert result is not None, "Should return a result"
@@ -147,11 +150,11 @@ def test_query_ollama_prevents_location_hallucination(mock_event_namer, mock_con
         prompt = mock_event_namer._build_naming_prompt(mock_context_edmonton)
         mock_event_namer._query_ollama(prompt)
 
-        # Verify specific anti-hallucination constraints (updated for new prompt format)
-        assert 'DO NOT invent or change the location' in prompt, \
+        # Verify specific anti-hallucination constraints (home mode)
+        assert 'DO NOT invent or state a city or state anywhere in the name' in prompt, \
             "Prompt should explicitly warn against location hallucination"
-        assert 'ONLY use the provided location' in prompt, \
-            "Prompt should enforce using only the provided location"
+        assert 'never state the city or state in the folder name' in prompt, \
+            "Prompt should enforce withholding the home city"
         assert prompt.count('Edmonton') >= 2, \
             "Edmonton should be mentioned multiple times for emphasis"
 
@@ -179,10 +182,12 @@ def test_query_ollama_with_unknown_location(mock_event_namer, mock_context_edmon
         prompt = mock_event_namer._build_naming_prompt(context_no_location)
         result = mock_event_namer._query_ollama(prompt)
 
-        # Verify unknown location handling (updated for new prompt format)
+        # Verify unknown location handling - no GPS routes to the dedicated
+        # "unknown" mode prompt, which omits location entirely rather than
+        # stating "Unknown" as if it were a real city value
         assert 'Unknown' in prompt, "Should use 'Unknown' when no city provided"
-        assert 'ONLY use the provided location' in prompt, \
-            "Should still enforce location constraint even with Unknown"
+        assert 'DO NOT invent a location - none is available' in prompt, \
+            "Should still enforce a location constraint even with no GPS"
 
     print("✅ Ollama handles unknown location correctly")
 
@@ -205,7 +210,7 @@ def test_query_ollama_format_requirements(mock_event_namer, mock_context_edmonto
         # Verify format requirements (updated for new prompt format)
         assert 'Format Requirements' in prompt, "Prompt should include format instructions section"
         assert 'YYYY_MM_DD' in prompt, "Prompt should specify date format"
-        assert 'Examples (home events have no city' in prompt, \
+        assert 'Examples (home location is' in prompt, \
             "Prompt should include example outputs"
 
     print("✅ Ollama prompt includes proper format requirements")
@@ -258,13 +263,13 @@ def test_issue_14_regression_prevention(mock_event_namer, mock_context_edmonton)
         prompt = mock_event_namer._build_naming_prompt(mock_context_edmonton)
         result = mock_event_namer._query_ollama(prompt)
 
-        # Core regression prevention checks (updated for new prompt format)
+        # Core regression prevention checks (home mode - Edmonton is home city)
         assert 'Edmonton' in prompt, \
             "REGRESSION: Prompt must include actual location from GPS data"
-        assert 'ONLY use the provided location' in prompt, \
+        assert 'DO NOT invent or state a city or state anywhere in the name' in prompt, \
             "REGRESSION: Prompt must enforce location constraint"
-        assert 'DO NOT invent or change the location' in prompt, \
-            "REGRESSION: Prompt must warn against location hallucination"
+        assert 'never state the city or state in the folder name' in prompt, \
+            "REGRESSION: Prompt must warn against stating an invented/wrong city"
 
         # Verify result quality
         assert result is not None, "REGRESSION: Should generate a result"
@@ -452,7 +457,7 @@ def test_query_ollama_simple_directive_prompt_structure(mock_event_namer, mock_c
             "Prompt should include negative directive"
         assert 'Here are some options' in prompt, \
             "Prompt should show examples of WRONG meta-text output"
-        assert 'Examples (home events have no city' in prompt, \
+        assert 'Examples (home location is' in prompt, \
             "Prompt should show positive examples"
 
         # Verify it does NOT use explanatory phrasing
@@ -557,12 +562,17 @@ def test_cache_key_includes_people_category(mock_event_namer, mock_context_edmon
 
     import copy
 
-    # Context with solo person
+    # Context with solo person - non-empty scenes/objects, otherwise the
+    # cache key is None regardless of people category (issue #76)
     context_solo = copy.deepcopy(mock_context_edmonton)
+    context_solo['content']['scenes'] = ['kitchen']
+    context_solo['content']['objects'] = ['table']
     context_solo['people']['people_category'] = 'solo'
 
     # Context with group
     context_group = copy.deepcopy(mock_context_edmonton)
+    context_group['content']['scenes'] = ['kitchen']
+    context_group['content']['objects'] = ['table']
     context_group['people']['people_category'] = 'group'
 
     # Generate cache keys
@@ -581,9 +591,15 @@ def test_cache_key_includes_people_category(mock_event_namer, mock_context_edmon
 
 
 @pytest.mark.unit
-def test_cache_key_handles_empty_content(mock_event_namer, mock_context_edmonton):
-    """Test that cache key handles missing/empty content gracefully."""
-    print("🧪 Testing cache key handles empty content")
+@pytest.mark.regression
+def test_cache_key_none_when_content_empty(mock_event_namer, mock_context_edmonton):
+    """Issue #76 regression: with no scenes/objects at all, the cache key
+    used to collapse to fixed 'unknown_scene'/'unknown_objects' placeholders,
+    so two genuinely different small events (same city/weekday/time-of-day)
+    could collide on an identical key. _generate_cache_key must return None
+    in this case so callers skip the cache entirely instead of risking a
+    collision."""
+    print("🧪 Testing cache key is None when content is empty")
 
     import copy
 
@@ -592,14 +608,13 @@ def test_cache_key_handles_empty_content(mock_event_namer, mock_context_edmonton
     context_empty['content']['scenes'] = []
     context_empty['content']['objects'] = []
 
-    # Should not crash
     key = mock_event_namer._generate_cache_key(context_empty)
 
-    # Should have fallback values
-    assert 'unknown_scene' in key, "Should use 'unknown_scene' when no scenes"
-    assert 'unknown_objects' in key, "Should use 'unknown_objects' when no objects"
+    assert key is None, (
+        "Cache key must be None when scenes and objects are both empty - "
+        f"got {key!r}, which risks colliding with an unrelated cluster")
 
-    print("✅ Cache key handles empty content gracefully")
+    print("✅ Cache key is None for empty content, as expected")
 
 
 @pytest.mark.unit
@@ -825,15 +840,16 @@ def test_sample_captions_included_in_prompt(mock_event_namer, mock_context_edmon
     ]
 
     prompt = mock_event_namer._build_naming_prompt(context)
-    assert 'Photo Descriptions' in prompt
+    assert 'Photos in this cluster' in prompt
+    assert 'Photo 1 of 1' in prompt
     assert 'A man kneels by a decorated Christmas tree holding a wrapped gift.' in prompt
 
 
 @pytest.mark.unit
 def test_sample_captions_omitted_when_empty(mock_event_namer, mock_context_edmonton):
-    """No Photo Descriptions section is added when there are no captions (Issue #72)."""
+    """No photos section is added when there are no captions (Issue #72)."""
     prompt = mock_event_namer._build_naming_prompt(mock_context_edmonton)
-    assert 'Photo Descriptions' not in prompt
+    assert 'Photos in this cluster' not in prompt
 
 
 @pytest.mark.unit
@@ -862,6 +878,308 @@ def test_examples_are_not_uniformly_seasonal_generic(mock_event_namer, mock_cont
     """The example list mixes in people/content-driven names, not just <Season> <Generic> (Issue #72)."""
     prompt = mock_event_namer._build_naming_prompt(mock_context_edmonton)
     assert "Sarah's Birthday Dinner" in prompt or "Elena's Birthday" in prompt
+
+
+# ===== UNIT TESTS FOR THE THREE-PROMPT NAMING ARCHITECTURE =====
+#
+# The single-prompt design asked the model to correctly GATE a conditional
+# ("state the city only if away, never if home") and it kept bleeding
+# across that gate - fixing an away-city bug broke home-city clusters. The
+# fix resolves mode (home/away/unknown) in Python from data already
+# available (GPS + city vs home_city), then builds a mode-specific prompt
+# with only the ONE instruction that actually applies - no gate to get
+# wrong. Validated against 48 real-cluster test runs (0 bugs) before being
+# ported into production - see
+# temp/diagnostics/2026-08-04_prompt_separation_competition/STATUS.md
+
+@pytest.mark.unit
+def test_determine_location_mode_unknown_when_no_gps(mock_event_namer, mock_context_edmonton):
+    import copy
+    context = copy.deepcopy(mock_context_edmonton)
+    context['location']['has_gps'] = False
+    context['location']['city'] = None
+
+    assert mock_event_namer._determine_location_mode(context['location']) == 'unknown'
+
+
+@pytest.mark.unit
+def test_determine_location_mode_home_when_city_matches_home_city(mock_event_namer, mock_context_edmonton):
+    # mock_context_edmonton's city ('Edmonton') matches the default home_city
+    assert mock_event_namer._determine_location_mode(mock_context_edmonton['location']) == 'home'
+
+
+@pytest.mark.unit
+def test_determine_location_mode_home_is_case_insensitive(mock_event_namer, mock_context_edmonton):
+    import copy
+    context = copy.deepcopy(mock_context_edmonton)
+    context['location']['city'] = 'EDMONTON'
+
+    assert mock_event_namer._determine_location_mode(context['location']) == 'home'
+
+
+@pytest.mark.unit
+def test_determine_location_mode_away_when_city_differs(mock_event_namer, mock_context_edmonton):
+    import copy
+    context = copy.deepcopy(mock_context_edmonton)
+    context['location']['city'] = 'Calgary'
+
+    assert mock_event_namer._determine_location_mode(context['location']) == 'away'
+
+
+@pytest.mark.unit
+def test_build_naming_prompt_dispatches_to_home_builder(mock_event_namer, mock_context_edmonton):
+    prompt = mock_event_namer._build_naming_prompt(mock_context_edmonton)
+    assert "which is the person's home city" in prompt
+    assert 'never state the city or state in the folder name' in prompt
+
+
+@pytest.mark.unit
+def test_build_naming_prompt_dispatches_to_away_builder(mock_event_namer, mock_context_edmonton):
+    import copy
+    context = copy.deepcopy(mock_context_edmonton)
+    context['location']['city'] = 'Calgary'
+
+    prompt = mock_event_namer._build_naming_prompt(context)
+    assert 'Always fold the city ("Calgary")' in prompt
+    assert '- City: Calgary' in prompt
+
+
+@pytest.mark.unit
+def test_build_naming_prompt_dispatches_to_unknown_builder(mock_event_namer, mock_context_edmonton):
+    import copy
+    context = copy.deepcopy(mock_context_edmonton)
+    context['location']['has_gps'] = False
+    context['location']['city'] = None
+
+    prompt = mock_event_namer._build_naming_prompt(context)
+    assert 'no GPS data is available' in prompt
+    assert 'Edmonton' not in prompt, "unknown mode should never mention the home city"
+
+
+@pytest.mark.unit
+def test_home_prompt_never_states_city_even_with_area(mock_event_namer, mock_context_edmonton):
+    import copy
+    context = copy.deepcopy(mock_context_edmonton)
+    context['location']['area'] = 'Aldergrove'
+
+    prompt = mock_event_namer._build_naming_prompt_home(context)
+    assert '- Area: Aldergrove' in prompt
+    assert '- City:' not in prompt, "home prompt should never have a City: field to state"
+
+
+@pytest.mark.unit
+def test_home_prompt_omits_area_line_when_not_available(mock_event_namer, mock_context_edmonton):
+    prompt = mock_event_namer._build_naming_prompt_home(mock_context_edmonton)
+    assert '- Area:' not in prompt
+
+
+@pytest.mark.unit
+def test_home_prompt_includes_venue_area_mutual_exclusivity_rule(mock_event_namer, mock_context_edmonton):
+    """Regression coverage: a venue name and an Area were sometimes combined
+    (e.g. "Dinner at Original Joes in Westmount") until this rule was made
+    explicit and unconditional - see STATUS.md 'Home prompt - fixes made'."""
+    prompt = mock_event_namer._build_naming_prompt_home(mock_context_edmonton)
+    assert 'do NOT also state the Area/neighbourhood' in prompt
+    assert 'never combine them' in prompt
+
+
+@pytest.mark.unit
+def test_home_prompt_directs_search_for_venue_name_in_raw_geo(mock_event_namer, mock_context_edmonton):
+    """Regression coverage: 'Ed's Bowling' was only findable because the
+    prompt directs the model to look beyond the top-level 'name' field."""
+    import copy
+    context = copy.deepcopy(mock_context_edmonton)
+    context['location']['raw_geo'] = {'name': '123 Some Street', 'address': {'road': "Ed's Bowling"}}
+
+    prompt = mock_event_namer._build_naming_prompt_home(context)
+    assert 'not just the top-level "name" field' in prompt
+    assert "Ed's Bowling" in prompt  # raw geo JSON dump should be present verbatim
+
+
+@pytest.mark.unit
+def test_away_prompt_always_states_city_regardless_of_venue(mock_event_namer, mock_context_edmonton):
+    """Regression coverage: a venue name used to make the model skip the
+    city-folding rule entirely (cluster 9 lost 'in Calgary') until this was
+    made unconditional - see STATUS.md."""
+    import copy
+    context = copy.deepcopy(mock_context_edmonton)
+    context['location']['city'] = 'Calgary'
+    context['location']['raw_geo'] = {'name': 'Elephant & Castle'}
+
+    prompt = mock_event_namer._build_naming_prompt_away(context)
+    assert 'do this whether or not a venue name is used' in prompt
+    assert '- City: Calgary' in prompt
+
+
+@pytest.mark.unit
+def test_away_prompt_does_not_reference_home_city(mock_event_namer, mock_context_edmonton):
+    """The away prompt never needs to reference 'home' as a concept - the
+    home/away decision is already resolved in Python before this prompt is
+    built, so referencing it here just reintroduces unnecessary
+    comparison-reasoning (removed per user direction)."""
+    import copy
+    context = copy.deepcopy(mock_context_edmonton)
+    context['location']['city'] = 'Calgary'
+
+    prompt = mock_event_namer._build_naming_prompt_away(context)
+    assert 'home' not in prompt.lower()
+
+
+@pytest.mark.unit
+def test_unknown_prompt_never_mentions_city_or_area(mock_event_namer, mock_context_edmonton):
+    import copy
+    context = copy.deepcopy(mock_context_edmonton)
+    context['location']['has_gps'] = False
+    context['location']['city'] = None
+    context['location']['area'] = 'Some Neighbourhood'  # should still never appear
+
+    prompt = mock_event_namer._build_naming_prompt_unknown(context)
+    assert '- City:' not in prompt
+    assert '- Area:' not in prompt
+    assert 'Some Neighbourhood' not in prompt
+
+
+# ===== UNIT TESTS FOR VENUE RESOLVER WIRING (_resolve_venue) =====
+
+@pytest.mark.unit
+def test_resolve_venue_injects_confirmed_venue_into_raw_geo(mock_event_namer, mock_context_edmonton):
+    import copy
+    context = copy.deepcopy(mock_context_edmonton)
+    context['location']['raw_geo'] = {'lat': '53.0', 'lon': '-113.0'}
+    context['content']['sample_captions'] = ['A photo of a ski hill.']
+
+    mock_event_namer.venue_resolver = Mock()
+    mock_event_namer.venue_resolver.resolve.return_value = 'Rabbit Hill Snow Resort'
+
+    proceed = mock_event_namer._resolve_venue(context)
+
+    assert proceed is True
+    assert context['location']['raw_geo']['name'] == 'Rabbit Hill Snow Resort'
+
+
+@pytest.mark.unit
+def test_resolve_venue_returns_false_on_venue_search_error(mock_event_namer, mock_context_edmonton):
+    from src.venue_resolver import VenueSearchError
+    import copy
+    context = copy.deepcopy(mock_context_edmonton)
+    context['location']['raw_geo'] = {'lat': '53.0', 'lon': '-113.0'}
+    context['content']['sample_captions'] = ['A photo of a restaurant.']
+
+    mock_event_namer.venue_resolver = Mock()
+    mock_event_namer.venue_resolver.resolve.side_effect = VenueSearchError('simulated failure')
+
+    proceed = mock_event_namer._resolve_venue(context)
+
+    assert proceed is False, "a genuine search failure should signal 'skip naming', not proceed with stale data"
+
+
+@pytest.mark.unit
+def test_resolve_venue_skips_when_no_raw_geo(mock_event_namer, mock_context_edmonton):
+    context = mock_context_edmonton  # no raw_geo key at all
+    mock_event_namer.venue_resolver = Mock()
+
+    proceed = mock_event_namer._resolve_venue(context)
+
+    assert proceed is True
+    mock_event_namer.venue_resolver.resolve.assert_not_called()
+
+
+@pytest.mark.unit
+def test_resolve_venue_skips_when_no_captions(mock_event_namer, mock_context_edmonton):
+    import copy
+    context = copy.deepcopy(mock_context_edmonton)
+    context['location']['raw_geo'] = {'lat': '53.0', 'lon': '-113.0'}
+    # content.sample_captions left unset (empty)
+
+    mock_event_namer.venue_resolver = Mock()
+    proceed = mock_event_namer._resolve_venue(context)
+
+    assert proceed is True
+    mock_event_namer.venue_resolver.resolve.assert_not_called()
+
+
+@pytest.mark.unit
+def test_venue_resolver_disabled_by_default_flag(mock_context_edmonton):
+    """enable_venue_search=False should mean no VenueResolver is constructed
+    at all, regardless of whether the module is importable."""
+    with patch('requests.post'):
+        namer = EventNamer(enable_llm=True, ollama_model="llama3.1:8b", enable_venue_search=False)
+    assert namer.venue_resolver is None
+
+
+@pytest.mark.unit
+def test_generate_event_name_returns_none_when_venue_search_fails(mock_event_namer, tmp_path):
+    """End-to-end wiring check: a VenueSearchError during naming should
+    make generate_event_name return None (skip this cycle) rather than
+    proceed with an unenriched, potentially-misleading raw_geo."""
+    from src.venue_resolver import VenueSearchError
+    from datetime import datetime
+
+    mock_event_namer.cache_file = tmp_path / "isolated_cache.json"
+    mock_event_namer.naming_cache = {}
+    mock_event_namer.venue_resolver = Mock()
+    mock_event_namer.venue_resolver.resolve.side_effect = VenueSearchError('simulated failure')
+    mock_event_namer._query_ollama = Mock(return_value="Should not be reached")
+
+    cluster_data = {
+        'files': [],
+        'start_time': datetime(2024, 1, 15, 14, 0),
+        'end_time': datetime(2024, 1, 15, 15, 0),
+        'location_info': {
+            'city': 'Calgary', 'state': 'Alberta', 'country': 'Canada',
+            'latitude': 51.0, 'raw_data': {'lat': '51.0', 'lon': '-114.0'},
+        },
+        'content_analysis': {
+            'average_confidence': 0.8,
+            'sample_captions': ['A photo of a restaurant.'],
+        },
+    }
+
+    result = mock_event_namer.generate_event_name(cluster_data)
+
+    assert result is None
+    mock_event_namer.venue_resolver.resolve.assert_called_once()
+    mock_event_namer._query_ollama.assert_not_called()
+
+
+@pytest.mark.unit
+@pytest.mark.regression
+def test_issue_76_regression_empty_content_clusters_dont_share_cached_name(mock_event_namer, tmp_path):
+    """Issue #76 regression: two different real clusters on the same day/
+    city/weekday with no scene/object content analysis (a real, common case
+    for small clusters) used to collide on the same cache key and silently
+    share a cached name - e.g. a Calgary sushi dinner cluster and a
+    separate same-day foosball cluster both ended up named after the sushi
+    dinner. Each must get its own freshly-generated name instead."""
+    from datetime import datetime
+
+    mock_event_namer.cache_file = tmp_path / "isolated_cache.json"
+    mock_event_namer.naming_cache = {}
+    mock_event_namer.venue_resolver = None
+    mock_event_namer._query_ollama = Mock(side_effect=[
+        "2016_01_30 - Sushi Dinner at Pocket Holic in Calgary",
+        "2016_01_30 - Foosball with Friends in Calgary",
+    ])
+
+    def make_cluster(start_hour, start_minute):
+        return {
+            'files': [],
+            'start_time': datetime(2016, 1, 30, start_hour, start_minute),
+            'end_time': datetime(2016, 1, 30, start_hour, start_minute + 20),
+            'location_info': {
+                'city': 'Calgary', 'state': 'Alberta', 'country': 'Canada',
+                'latitude': 51.0, 'raw_data': {'lat': '51.0', 'lon': '-114.0'},
+            },
+            'content_analysis': {'average_confidence': 0.8},
+        }
+
+    name_1 = mock_event_namer.generate_event_name(make_cluster(18, 39))
+    name_2 = mock_event_namer.generate_event_name(make_cluster(20, 9))
+
+    assert name_1 != name_2, (
+        f"Two different clusters got the same name via a cache collision: {name_1!r}")
+    assert mock_event_namer._query_ollama.call_count == 2, (
+        "Second cluster must generate its own name, not reuse a cached one")
 
 
 if __name__ == "__main__":
