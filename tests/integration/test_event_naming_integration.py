@@ -22,6 +22,7 @@ from pathlib import Path
 import tempfile
 import json
 import os
+import requests
 
 # Import core classes
 try:
@@ -32,6 +33,19 @@ except ImportError:
     import media_detector
     EventNamer = event_namer.EventNamer
     MediaFile = media_detector.MediaFile
+
+
+def _ollama_running() -> bool:
+    """Check for a live local Ollama server - used to skip the real-LLM
+    tests below cleanly on a machine without Ollama running, rather than
+    fail with a connection error."""
+    try:
+        return requests.get("http://localhost:11434/api/version", timeout=3).status_code == 200
+    except Exception:
+        return False
+
+
+requires_ollama = pytest.mark.skipif(not _ollama_running(), reason="Ollama server not running locally")
 
 
 # ===== MOCK FIXTURES FOR INTEGRATION TESTS =====
@@ -273,6 +287,82 @@ def test_validation_rejects_hallucinated_location_names(event_namer_with_mocked_
                 print(f"✅ Validation correctly handled: {hallucinated_name}")
 
     print("✅ Validation system correctly rejects hallucinated location names")
+
+
+# ===== REAL OLLAMA TESTS (issue #80 follow-up) =====
+#
+# Unlike every test above, these hit a real local Ollama server - no
+# _query_ollama mocking - to verify the actual configured naming model
+# follows the first-names-for-1-2-people / no-names-for-3+ prompt behavior,
+# not just that the prompt text is constructed correctly (that's already
+# covered by fast mocked unit tests in tests/unit/test_event_namer_unit.py).
+# Skipped cleanly if Ollama isn't running locally.
+
+def _real_llm_people_cluster_data(people_detected):
+    return {
+        'files': [],
+        'start_time': datetime(2024, 1, 15, 14, 0),
+        'end_time': datetime(2024, 1, 15, 16, 0),
+        'location_info': {
+            'city': 'Edmonton', 'state': 'Alberta', 'country': 'Canada',
+            'latitude': 53.5, 'raw_data': {'lat': '53.5', 'lon': '-113.5'},
+        },
+        'content_analysis': {
+            'average_confidence': 0.8,
+            'top_scenes': ['backyard'],
+            'top_objects': ['patio', 'chairs'],
+            'sample_captions': [
+                'A group of people sitting around a patio table, talking and laughing.',
+                'People relaxing in a backyard on a sunny afternoon.',
+            ],
+        },
+        'people_detected': people_detected,
+    }
+
+
+@requires_ollama
+@pytest.mark.integration
+@pytest.mark.slow
+def test_real_ollama_two_people_get_named(tmp_path):
+    """Issue #80 follow-up, real LLM: with 2 people_detected, the actual
+    configured Ollama model should produce a name using at least one of
+    their first names - not surnames, not silence."""
+    namer = EventNamer(enable_llm=True, enable_venue_search=False)
+    namer.cache_file = tmp_path / "isolated_cache.json"
+    namer.naming_cache = {}
+
+    cluster_data = _real_llm_people_cluster_data(['Jane Smith', 'John Doe'])
+    result = namer.generate_event_name(cluster_data)
+
+    print(f"Real Ollama result (2 people): {result!r}")
+    assert result is not None, "Real LLM call should produce a name"
+    assert 'Smith' not in result and 'Doe' not in result, (
+        f"Surnames must never appear (prompt never sends them): {result!r}")
+    assert 'Jane' in result or 'John' in result, (
+        f"Expected at least one first name in a 2-person event name, got: {result!r}")
+
+
+@requires_ollama
+@pytest.mark.integration
+@pytest.mark.slow
+def test_real_ollama_three_people_not_named(tmp_path):
+    """Issue #80 follow-up, real LLM: with 3 people_detected, the actual
+    configured Ollama model should NOT invent a name-based title - the
+    prompt gives it no names to work with and explicitly no "use their
+    name" guidance past 2 people."""
+    namer = EventNamer(enable_llm=True, enable_venue_search=False)
+    namer.cache_file = tmp_path / "isolated_cache.json"
+    namer.naming_cache = {}
+
+    cluster_data = _real_llm_people_cluster_data(['Jane Smith', 'John Doe', 'Amy Lee'])
+    result = namer.generate_event_name(cluster_data)
+
+    print(f"Real Ollama result (3 people): {result!r}")
+    assert result is not None, "Real LLM call should produce a name"
+    for name in ('Jane', 'John', 'Amy', 'Smith', 'Doe', 'Lee'):
+        assert name not in result, (
+            f"No name should appear in a 3+ person event name (prompt gives it none "
+            f"to work with): got {result!r}")
 
 
 if __name__ == "__main__":

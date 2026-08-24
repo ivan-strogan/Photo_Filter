@@ -939,8 +939,12 @@ class EventNamer:
         return f"\n\n**Photos in this cluster ({total} total):**\n{lines}"
 
     def _build_naming_people_block(self, people: Dict[str, Any]) -> str:
+        # Naming guidance only for solo/couple (<=2) - past that, "use their
+        # name" breaks down grammatically for a possessive folder name
+        # ("Jane, John & Amy's Birthday" reads like only Amy's) and a name
+        # list doesn't scale as a title anyway (issue #80 follow-up)
         guidance = ""
-        if people['has_people'] and people['people_count'] <= 4:
+        if people['has_people'] and people['people_count'] <= 2:
             guidance = (f"\n- {people['main_people']} appears in this event; if the event "
                         f"centers on them, use their name (e.g. \"{people['main_people']}'s Birthday\")")
         return f"""**People Detected:**
@@ -1816,23 +1820,32 @@ class EventNamer:
     def _format_people_names(self, people_detected: List[str]) -> str:
         """Format people names for event naming.
 
+        Uses first names only (e.g. "Jane" not "Jane Smith") - full names
+        read as overly formal for a personal photo folder name.
+
+        Only names solo/couple (1-2 people, e.g. "Jane" or "Jane & John") -
+        past 2, a name list doesn't scale as a folder title ("Jane, John,
+        Amy & Sam's Birthday" reads like only Sam's) and there's no single
+        name a group event would center on, so it falls back to a plain
+        headcount instead of naming anyone (issue #80 follow-up).
+
         Args:
             people_detected: List of detected people names
 
         Returns:
-            Formatted string of people names
+            Formatted string of people first names, or a headcount for 3+
         """
         if not people_detected:
             return ""
 
-        if len(people_detected) == 1:
-            return people_detected[0]
-        elif len(people_detected) == 2:
-            return f"{people_detected[0]} & {people_detected[1]}"
-        elif len(people_detected) <= 4:
-            return ", ".join(people_detected[:-1]) + f" & {people_detected[-1]}"
+        first_names = [name.split()[0] if name.split() else name for name in people_detected]
+
+        if len(first_names) == 1:
+            return first_names[0]
+        elif len(first_names) == 2:
+            return f"{first_names[0]} & {first_names[1]}"
         else:
-            return f"{people_detected[0]} & {len(people_detected)-1} others"
+            return f"a group of {len(first_names)}"
 
     def _classify_people_category(self, people_count: int, consistency: float) -> str:
         """Classify the people category for event naming.
