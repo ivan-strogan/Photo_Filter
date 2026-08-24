@@ -874,6 +874,57 @@ def test_people_guidance_omitted_when_no_people(mock_event_namer, mock_context_e
 
 
 @pytest.mark.unit
+@pytest.mark.regression
+def test_people_guidance_omitted_for_groups_larger_than_two(mock_event_namer, mock_context_edmonton):
+    """Issue #80 follow-up: the "use their name" guidance must not appear
+    for 3+ people - there's no single name a group event centers on, and
+    the possessive example ("Jane, John & Amy's Birthday") reads wrong for
+    a group anyway."""
+    import copy
+    context = copy.deepcopy(mock_context_edmonton)
+    context['people']['has_people'] = True
+    context['people']['people_count'] = 3
+    context['people']['main_people'] = 'a group of 3'
+
+    prompt = mock_event_namer._build_naming_prompt(context)
+    assert 'use their name' not in prompt
+
+
+@pytest.mark.unit
+@pytest.mark.regression
+def test_format_people_names_uses_first_name_only(mock_event_namer):
+    """Issue #80: people names in the folder name should be first-name-only
+    (e.g. "Jane" not "Jane Smith") - a full surname reads too formal for a
+    personal photo folder."""
+    assert mock_event_namer._format_people_names(['Jane Smith']) == 'Jane'
+    assert mock_event_namer._format_people_names(['Jane Smith', 'John Doe']) == 'Jane & John'
+
+
+@pytest.mark.unit
+@pytest.mark.regression
+def test_format_people_names_no_names_past_two_people(mock_event_namer):
+    """Issue #80 follow-up: past 2 people, don't list any names - a name
+    list doesn't scale as a folder title ("Jane, John, Amy & Sam's Birthday"
+    reads like only Sam's) and there's no single name a group event centers
+    on. Falls back to a plain headcount instead."""
+    assert mock_event_namer._format_people_names(
+        ['Jane Smith', 'John Doe', 'Amy Lee']) == 'a group of 3'
+    assert mock_event_namer._format_people_names(
+        ['Jane Smith', 'John Doe', 'Amy Lee', 'Sam Fox', 'Kim Park']) == 'a group of 5'
+
+
+@pytest.mark.unit
+def test_format_people_names_single_token_name_unchanged(mock_event_namer):
+    """A name with no surname on file (just one token) is used as-is."""
+    assert mock_event_namer._format_people_names(['Jane']) == 'Jane'
+
+
+@pytest.mark.unit
+def test_format_people_names_empty_list(mock_event_namer):
+    assert mock_event_namer._format_people_names([]) == ''
+
+
+@pytest.mark.unit
 def test_examples_are_not_uniformly_seasonal_generic(mock_event_namer, mock_context_edmonton):
     """The example list mixes in people/content-driven names, not just <Season> <Generic> (Issue #72)."""
     prompt = mock_event_namer._build_naming_prompt(mock_context_edmonton)
@@ -1140,6 +1191,73 @@ def test_generate_event_name_returns_none_when_venue_search_fails(mock_event_nam
     assert result is None
     mock_event_namer.venue_resolver.resolve.assert_called_once()
     mock_event_namer._query_ollama.assert_not_called()
+
+
+def _make_people_cluster_data(people_detected):
+    """cluster_data for the end-to-end people-naming tests below - real
+    scenes/objects so the naming cache key isn't None (issue #76) and
+    doesn't interfere with these tests."""
+    from datetime import datetime
+    return {
+        'files': [],
+        'start_time': datetime(2024, 1, 15, 14, 0),
+        'end_time': datetime(2024, 1, 15, 15, 0),
+        'location_info': {
+            'city': 'Edmonton', 'state': 'Alberta', 'country': 'Canada',
+            'latitude': 53.5, 'raw_data': {'lat': '53.5', 'lon': '-113.5'},
+        },
+        'content_analysis': {
+            'average_confidence': 0.8,
+            'top_scenes': ['backyard'],
+            'top_objects': ['patio'],
+            'sample_captions': ['A group of people on a patio.'],
+        },
+        'people_detected': people_detected,
+    }
+
+
+@pytest.mark.unit
+@pytest.mark.regression
+def test_end_to_end_two_people_from_face_db_appear_in_prompt(mock_event_namer, tmp_path):
+    """Issue #80 end-to-end: with 2 people_detected (as real face
+    recognition against the people database would produce), the actual
+    prompt sent to the LLM must show their first names and the
+    "use their name" guidance - not just the isolated _format_people_names
+    helper in a vacuum."""
+    mock_event_namer.cache_file = tmp_path / "isolated_cache.json"
+    mock_event_namer.naming_cache = {}
+    mock_event_namer.venue_resolver = None
+    mock_event_namer._query_ollama = Mock(return_value="2024_01_15 - Jane & John's Patio Afternoon")
+
+    cluster_data = _make_people_cluster_data(['Jane Smith', 'John Doe'])
+    mock_event_namer.generate_event_name(cluster_data)
+
+    prompt = mock_event_namer._query_ollama.call_args[0][0]
+    assert 'Jane & John' in prompt
+    assert 'Jane Smith' not in prompt and 'John Doe' not in prompt, (
+        "Full surnames must not reach the prompt, only first names")
+    assert 'use their name' in prompt
+
+
+@pytest.mark.unit
+@pytest.mark.regression
+def test_end_to_end_three_people_from_face_db_no_names_in_prompt(mock_event_namer, tmp_path):
+    """Issue #80 end-to-end: with 3 people_detected, the actual prompt sent
+    to the LLM must not name anyone (no first names, no "use their name"
+    guidance) - falls back to a plain headcount instead."""
+    mock_event_namer.cache_file = tmp_path / "isolated_cache.json"
+    mock_event_namer.naming_cache = {}
+    mock_event_namer.venue_resolver = None
+    mock_event_namer._query_ollama = Mock(return_value="2024_01_15 - Patio Afternoon with Friends")
+
+    cluster_data = _make_people_cluster_data(['Jane Smith', 'John Doe', 'Amy Lee'])
+    mock_event_namer.generate_event_name(cluster_data)
+
+    prompt = mock_event_namer._query_ollama.call_args[0][0]
+    for name in ('Jane', 'John', 'Amy'):
+        assert name not in prompt, f"'{name}' must not appear in the prompt for a 3-person group"
+    assert 'use their name' not in prompt
+    assert 'a group of 3' in prompt
 
 
 @pytest.mark.unit
